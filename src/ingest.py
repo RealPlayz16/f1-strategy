@@ -112,6 +112,16 @@ def ingest_race(season: int, event: str, split: str, force: bool = False) -> dic
             rcm_df[col] = rcm_df[col].astype("string")
     rcm_df.to_parquet(out / "rcm.parquet", index=False)
 
+    # Race control message Time is wall clock, and without telemetry FastF1 has no t0_date to
+    # map it to session time. Track status and session status carry session time directly.
+    for name, frame in (("track_status", session.track_status),
+                        ("session_status", session.session_status)):
+        df = td_to_seconds(pd.DataFrame(frame)) if frame is not None else pd.DataFrame()
+        for col in ("Status", "Message"):
+            if col in df.columns:
+                df[col] = df[col].astype("string")
+        df.to_parquet(out / f"{name}.parquet", index=False)
+
     # total race laps, useful for sc_rates and laps_remaining
     meta = pd.DataFrame(
         [

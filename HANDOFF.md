@@ -62,8 +62,9 @@ triggers. Delivered with a pit-wall dashboard and an Arduino "BOX" pit board.
 - docs/fast_flag_recon.md: rec schema, time base, transport, lead times, overlap
 - ruff clean, pytest passing
 
+- src/safety_car.py: SC / VSC / RED events from the track status feed (counts match race
+  control in all 27 races) and train-only deployment rates
 ### Not started
-- src/safety_car.py
 - src/overtakes.py
 - Sanity plots (lap time vs tire age per compound; pit loss per track)
 - README.md (credit Naman for Fast Flag)
@@ -168,8 +169,16 @@ pitloss_by_track.parquet (train races only, key season + event)
   phi, n_stops, n_green, n_sc, n_vsc
   For another phi: loss = green_s - phi * (lap_cond_s - lap_green_s)
 
-sc_rates.parquet (not built yet)
-  event, race_laps, sc_deployments, vsc_deployments, p_sc_per_lap, p_vsc_per_lap
+sc_events.parquet (all races, split column; ground truth for the backtest)
+  season, round, event, split, race_laps, kind (SC, VSC, RED), lap_deploy, t_deploy_s,
+  lap_end, t_end_s, t_ending_s, ended_by, duration_s, duration_laps
+  From track_status.parquet (session time). Train medians: SC 3 laps / 436 s, VSC 96 s.
+
+sc_rates.parquet (train races only)
+  event, n_races, race_laps, sc_deployments, vsc_deployments, p_sc_per_lap,
+  p_vsc_per_lap, p_sc_per_lap_raw, p_vsc_per_lap_raw, p_sc_lap1
+  Lap-1 SC is a start hazard counted apart (p_sc_lap1 = 2 of 23 = 0.087). Per-lap
+  rates shrunk to the global train rate with a 60-lap prior (1 to 3 races per track).
 
 overtakes.parquet (not built yet)
   season, round, event, lap, overtaker, overtaken, pace_delta_s, tyre_age_delta,
@@ -188,6 +197,9 @@ overtakes.parquet (not built yet)
 ## Data notes
 - 2023 Monza and 2024 Bahrain used only two compounds. Expected, not a bug.
 - Ergast warnings on session load are harmless and expected for recent sessions
+- Race control message Time (rcm.parquet) is wall clock. LapStartDate is empty because
+  FastF1 needs telemetry for t0_date. Use track_status.parquet and session_status.parquet
+  (session time, saved by ingest since Session 1) for anything timed.
 - 2023 Austria lap 2: SC led the field through the pit lane. Not a mass pit stop.
 - 2025 Dutch: pit lane limit raised to 80 km/h. Transit 17.8 s vs 21.2 s in 2024,
   green loss 18.1 s vs 23.2 s. Pit loss is keyed by (season, event).

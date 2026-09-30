@@ -19,8 +19,9 @@ Recommendations (`rec`), one JSON object per flag decision (PROJECT_BRIEF Sectio
 ```
 
 - `t` is FastF1 SessionTime in seconds, the same clock as our `session_time_s`,
-  `pit_in_time_s` and `rcm.parquet` Time. Verify on one race in Session 5 by matching
-  an official SC in their `<race>_official.json` to our `rcm.parquet`.
+  `pit_in_time_s`, `track_status.parquet` and `sc_events.parquet`. Not the same as our
+  `rcm.parquet` Time, which is wall clock. Verify on one race in Session 5 by matching an
+  official SC in their `<race>_official.json` to our `sc_events.parquet` t_deploy_s.
 - Track-wide flags: `VSC` (message `VIRTUAL SAFETY CAR DEPLOYED`), `SC`
   (`SAFETY CAR DEPLOYED`), `RED` (`RED FLAG`). `msector` is the marshal sector that
   caused it.
@@ -95,4 +96,4 @@ window.
 - Parse recs from `data/timeline/<race>.json.gz`, align `t` to our laps via
   `session_time_s`.
 - Trigger re-optimization on SC/VSC recs. Weight by P(confirmed). Treat `TRACK CLEAR`
-  as the end signal. Compare against the official SC time from `rcm.parquet`.
+  as the end signal. Compare against the official SC time from `sc_events.parquet`.
