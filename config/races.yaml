@@ -1,0 +1,30 @@
+# Dry-race candidates, 2023-2025 regulation era.
+# Wet races (INTERMEDIATE/WET compounds present) are auto-excluded by ingest.py.
+train:
+  - {season: 2023, event: "Bahrain"}
+  - {season: 2023, event: "Saudi Arabian"}
+  - {season: 2023, event: "Spanish"}
+  - {season: 2023, event: "Austrian"}
+  - {season: 2023, event: "British"}
+  - {season: 2023, event: "Hungarian"}
+  - {season: 2023, event: "Italian"}
+  - {season: 2023, event: "Japanese"}
+  - {season: 2024, event: "Bahrain"}
+  - {season: 2024, event: "Saudi Arabian"}
+  - {season: 2024, event: "Spanish"}
+  - {season: 2024, event: "Austrian"}
+  - {season: 2024, event: "Hungarian"}
+  - {season: 2024, event: "Dutch"}
+  - {season: 2024, event: "Italian"}
+  - {season: 2024, event: "Azerbaijan"}
+  - {season: 2024, event: "United States"}
+  - {season: 2024, event: "Abu Dhabi"}
+  - {season: 2025, event: "Bahrain"}
+  - {season: 2025, event: "Spanish"}
+  - {season: 2025, event: "Hungarian"}
+  - {season: 2025, event: "Italian"}
+holdout:
+  - {season: 2025, event: "Japanese"}
+  - {season: 2025, event: "Dutch"}
+  - {season: 2025, event: "Singapore"}
+  - {season: 2025, event: "Abu Dhabi"}
