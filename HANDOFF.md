@@ -41,31 +41,38 @@ triggers. Delivered with a pit-wall dashboard and an Arduino "BOX" pit board.
 
 ### Done and verified
 - Repo scaffold, requirements.txt, .gitignore, pyproject.toml, .github/workflows/ci.yml
-- config/races.yaml: 22 train + 4 holdout races, 2023-2025
-- src/ingest.py: 26 races ingested clean, per-race laps/weather/rcm/meta parquet
+- config/races.yaml: 23 train + 4 holdout races, 2023-2025. Holdout: 2025 Japanese,
+  United States, Singapore, Abu Dhabi. 2025 Dutch moved to train in Session 1 because
+  Fast Flag trained on it; 2025 United States replaced it (dry, VSC lap 7, not in Fast
+  Flag's training or check races).
+- src/splits.py: split per race from config/races.yaml, the single source of truth.
+  meta.parquet also stores a split, written at ingest, which goes stale. Do not use it.
+- src/ingest.py: 27 races ingested clean, per-race laps/weather/rcm/meta parquet
   under data/processed/raw/, plus data/processed/ingest_manifest.csv.
   Wet-compound auto-exclusion verified against 2024 British GP (INTERMEDIATE).
-- src/clean.py: laps_clean.parquet, 29818 rows, 87.9% clean, 26 races.
-  Median clean lap by compound SOFT 83.6 < MEDIUM 84.8 < HARD 86.7, correct ordering.
-  Carries pit_in_time_s and pit_out_time_s.
-- src/pitloss.py: transit-based model built and run. Result: transit-window phi is
-  about 0 at every track (see "Pit loss model" below). Being replaced by phi fitted
-  from the SC discount.
-- tests/test_clean.py, tests/test_pitloss.py: 12 tests passing
-- ruff clean (smoke.py had a BOM and an import-sort error, fixed)
-
-### In progress
-- Pit loss: fit phi from the SC discount, apply to all tracks, key by
-  (event, season), exclude holdout. Plan under "Pit loss model".
+- src/clean.py: laps_clean.parquet, 30885 rows, 87.9% clean, 27 races, carries split,
+  pit_in_time_s and pit_out_time_s.
+  Compound pace ordering is NOT verified in Session 1. The earlier "SOFT < MEDIUM < HARD"
+  check pooled lap times across tracks and flipped when 2025 Austin was added. Within
+  race and uncorrected for fuel, HARD is 0.38 s faster than MEDIUM (it runs late on low
+  fuel). A race + fuel + tyre-age regression gives SOFT +0.11, HARD +0.10 vs MEDIUM,
+  fuel 0.051 s per lap remaining. Session 2 separates compound pace properly.
+- src/pitloss.py: green loss measured per (season, event), SC / VSC from stated phi.
+  Train only. See "Pit loss model".
+- docs/fast_flag_recon.md: rec schema, time base, transport, lead times, overlap
+- ruff clean, pytest passing
 
 ### Not started
 - src/safety_car.py
 - src/overtakes.py
-- Fast Flag recon (clone github.com/Pseudocoder28/Fast-Flag, document how SC/VSC
-  recommendations are emitted: format, timing, transport). Credit Naman in README.
-  Hard dependency for Session 5, do early.
 - Sanity plots (lap time vs tire age per compound; pit loss per track)
-- README.md
+- README.md (credit Naman for Fast Flag)
+
+## Session 4 task: validate PHI against position loss
+PHI = 0.08 is a stated assumption, not a measurement. In Session 4, validate it against
+the positions actually lost when stopping under SC in train races (race engine replay of
+those stops vs observed running order after the stop), not lap-time seconds. Lap times
+cannot identify SC pit loss (see below). Sweep PHI over 0.05 to 0.12 in the Monte Carlo.
 
 ## Pit loss model, and why
 
@@ -95,15 +102,27 @@ Measured in Session 1 from sector session times on green stops:
   the transit model gives SC loss equal to green loss, so no SC discount.
 - Telemetry to locate the true pit lines was considered and declined.
 
-### Current plan: phi from the SC discount
-- D = measured loss = in_lap + out_lap - 2 * L, with L trusted
-- phi_implied = (D_green - D_sc) / (L_sc - L_green), per (event, season)
-- Fit only on train races with a real stay-out sample under SC. Exclude Austria
-  (discount has the wrong sign) and damage repairs (2023 Japan ALB, BOT, ZHO lap 1;
-  2024 US ALB lap 3)
-- Pool across tracks, report the spread. Expect about 0.07. If the pooled value is
-  outside 0.04 to 0.12, stop and report rather than fitting harder
-- Apply pooled phi to every track. Green loss stays as measured. No clamps.
+### Finding: SC pit loss is not identifiable from lap times with this sample
+Tried phi_implied = (D_green - D_sc) / (L_sc - L_green), D = in_lap + out_lap - 2 * L,
+on train races with a stay-out sample under SC:
+- British 2023 0.035 (8 stops), Saudi 2023 0.319 (7), Bahrain 2025 0.179 (1),
+  Spain 2025 1.459 (1). Pooled 0.249, outside the 0.04 to 0.12 guard. Stopped there.
+- Cause: on laps where SC or VSC is deployed or ends, stay-out lap times spread 22 to
+  31 s across the field with rank correlation about 0.97 with running position (green
+  laps: 3 s). The stay-out median is not any one car's counterfactual.
+- Only 3 train stops have both laps fully under SC with lap times and a stay-out sample.
+- The earlier "British and Dutch near 0.07" came from a model table (British had the
+  transit-window phi built in; Dutch pooled 2024 green at 60 km/h with 2025 SC at 80).
+
+### Current model (src/pitloss.py)
+- green_s: median over trusted green stops of in_lap + out_lap - 2 * L_green, per
+  (season, event), train races only. Measured.
+- PHI = 0.08 stated; Monte Carlo sweeps PHI_RANGE = (0.05, 0.12).
+- L_cond = L_green * r_cond. r_cond = median over train races of stay-out lap on laps
+  entirely under the condition (status exactly "4" or "6") over that race's median clean
+  lap: SC 1.426, VSC 1.326.
+- sc_s, vsc_s = green_s - PHI * (L_cond - L_green). Per (season, event), never per stop.
+- No clamps anywhere.
 
 ### Rejected approach, do not reintroduce
 The original formula was (in_lap + out_lap) - 2 * reference_clean_lap, with the
@@ -136,15 +155,18 @@ laps_clean.parquet
   is_pit_out, is_sc, is_vsc, is_yellow, is_red, is_lap1, is_deleted,
   is_accurate, is_outlier, is_clean, track_temp, air_temp, laps_remaining
 
-pit_stops.parquet
+pit_stops.parquet (train races only)
   season, round, event, driver, lap, compound_in, compound_out, condition,
-  transit_s, ref_lap_s, lap_sum_s, pace_trusted, phi, pit_loss_s
+  transit_s, lap_sum_s, driver_pace_s, ref_lap_s, pace_trusted, measured_loss_s,
+  phi, pit_loss_s
+  measured_loss_s: green stops with trusted pace only. ref_lap_s under SC / VSC is the
+  stay-out median, a diagnostic (position confounded). pit_loss_s: green = measured,
+  SC / VSC = the (season, event) value.
 
-pitloss_by_track.parquet (being rekeyed to event, season)
-  event, green_s, sc_s, vsc_s, transit_s, phi, n_stops, n_green, n_sc, n_vsc
-
-pit_phi.parquet (being replaced by the SC-discount fit)
-  event, phi, n_fit, phi_season_spread
+pitloss_by_track.parquet (train races only, key season + event)
+  season, event, green_s, transit_s, lap_green_s, lap_sc_s, lap_vsc_s, sc_s, vsc_s,
+  phi, n_stops, n_green, n_sc, n_vsc
+  For another phi: loss = green_s - phi * (lap_cond_s - lap_green_s)
 
 sc_rates.parquet (not built yet)
   event, race_laps, sc_deployments, vsc_deployments, p_sc_per_lap, p_vsc_per_lap
@@ -168,7 +190,10 @@ overtakes.parquet (not built yet)
 - Ergast warnings on session load are harmless and expected for recent sessions
 - 2023 Austria lap 2: SC led the field through the pit lane. Not a mass pit stop.
 - 2025 Dutch: pit lane limit raised to 80 km/h. Transit 17.8 s vs 21.2 s in 2024,
-  green loss 19.9 s vs 23.2 s. Pit loss must be keyed by (event, season).
+  green loss 18.1 s vs 23.2 s. Pit loss is keyed by (season, event).
+- Holdout races have no pitloss_by_track row (train only). Session 5 must pick a
+  pre-race estimate, e.g. the same event's latest train season. Watch for pit lane
+  rule changes like Zandvoort 2025.
 - 2023 Japan and 2024 US: lap 1-3 SC stops include damage repairs (40 to 56 s transit)
 - Seasons 2023-2025 only. 2026 excluded: new regulations change tire behaviour.
 

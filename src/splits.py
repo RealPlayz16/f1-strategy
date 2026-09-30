@@ -42,7 +42,8 @@ def add_split(df: pd.DataFrame) -> pd.DataFrame:
     """Add a split column from season and event."""
     splits = load_splits()
     keys = df[["season", "event"]].drop_duplicates()
-    keys["split"] = [split_of(s, e, splits) for s, e in zip(keys["season"], keys["event"], strict=True)]
+    pairs = zip(keys["season"], keys["event"], strict=True)
+    keys["split"] = [split_of(s, e, splits) for s, e in pairs]
     return df.merge(keys, on=["season", "event"], how="left")
 
 
