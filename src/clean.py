@@ -121,6 +121,8 @@ def clean_race(race_path: Path) -> pd.DataFrame:
             "fresh_tyre": laps["FreshTyre"].fillna(False).astype(bool),
             "position": laps["Position"].astype(float),
             "session_time_s": laps["Time"].astype(float),
+            "pit_in_time_s": laps["PitInTime"].astype(float),
+            "pit_out_time_s": laps["PitOutTime"].astype(float),
             "track_status": laps["TrackStatus"].astype(str),
         }
     )
@@ -157,7 +159,8 @@ def clean_race(race_path: Path) -> pd.DataFrame:
     cols = [
         "season", "round", "event", "driver", "team", "lap", "lap_time_s",
         "sector1_s", "sector2_s", "sector3_s", "compound", "tyre_life", "stint",
-        "fresh_tyre", "position", "session_time_s", "gap_ahead_s", "track_status",
+        "fresh_tyre", "position", "session_time_s", "pit_in_time_s", "pit_out_time_s",
+        "gap_ahead_s", "track_status",
         "is_pit_in", "is_pit_out", "is_sc", "is_vsc", "is_yellow", "is_red",
         "is_lap1", "is_deleted", "is_accurate", "is_outlier", "is_clean",
         "track_temp", "air_temp", "laps_remaining",

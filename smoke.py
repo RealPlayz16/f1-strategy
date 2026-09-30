@@ -1,4 +1,5 @@
-﻿import fastf1
+import fastf1
+
 fastf1.set_log_level("WARNING")
 fastf1.Cache.enable_cache("data/cache")
 s = fastf1.get_session(2025, "Italian", "R")
