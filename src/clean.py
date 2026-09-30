@@ -14,6 +14,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from src.splits import load_splits, split_of
+
 RAW_DIR = Path("data/processed/raw")
 OUT_PATH = Path("data/processed/laps_clean.parquet")
 OUTLIER_FACTOR = 1.07
@@ -155,9 +157,10 @@ def clean_race(race_path: Path) -> pd.DataFrame:
     )
 
     df["laps_remaining"] = int(meta["race_laps"]) - df["lap"]
+    df["split"] = split_of(int(meta["season"]), str(meta["event"]))
 
     cols = [
-        "season", "round", "event", "driver", "team", "lap", "lap_time_s",
+        "season", "round", "event", "split", "driver", "team", "lap", "lap_time_s",
         "sector1_s", "sector2_s", "sector3_s", "compound", "tyre_life", "stint",
         "fresh_tyre", "position", "session_time_s", "pit_in_time_s", "pit_out_time_s",
         "gap_ahead_s", "track_status",
@@ -170,11 +173,12 @@ def clean_race(race_path: Path) -> pd.DataFrame:
 
 def build(split: str | None = None) -> pd.DataFrame:
     frames = []
+    splits = load_splits()
     for race_path in sorted(RAW_DIR.iterdir()):
         if not race_path.is_dir():
             continue
         meta = pd.read_parquet(race_path / "meta.parquet").iloc[0]
-        if split and str(meta["split"]) != split:
+        if split and split_of(int(meta["season"]), str(meta["event"]), splits) != split:
             continue
         print(f"cleaning {race_path.name} ...", flush=True)
         frames.append(clean_race(race_path))
@@ -197,8 +201,18 @@ def main(argv: list[str] | None = None) -> int:
     print(f"\nrows: {n}")
     print(f"clean rows: {int(df['is_clean'].sum())} ({df['is_clean'].mean():.1%})")
     print(f"races: {df.groupby(['season', 'round']).ngroups}")
-    print("\nmedian clean lap time by compound:")
-    print(df[df["is_clean"]].groupby("compound")["lap_time_s"].median().round(3).to_string())
+    # Within race: pooling lap times across tracks mixes circuits of different length, so the
+    # pooled compound median depends on which tracks ran which compound. Still not a pace
+    # check: no fuel correction, and HARD mostly runs late on low fuel (Session 2 separates it).
+    per_race = (
+        df[df["is_clean"]]
+        .groupby(["season", "round", "compound"])["lap_time_s"]
+        .median()
+        .unstack("compound")
+    )
+    delta = per_race.sub(per_race["MEDIUM"], axis=0)
+    print("\nclean lap vs same race MEDIUM, median over races (s, not fuel corrected):")
+    print(delta.median().round(3).to_string())
     print(f"\nwrote {args.out}")
     return 0
 

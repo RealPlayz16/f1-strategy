@@ -23,8 +23,9 @@ train:
   - {season: 2025, event: "Spanish"}
   - {season: 2025, event: "Hungarian"}
   - {season: 2025, event: "Italian"}
+  - {season: 2025, event: "Dutch"}  # moved from holdout: Fast Flag trained on it
 holdout:
   - {season: 2025, event: "Japanese"}
-  - {season: 2025, event: "Dutch"}
+  - {season: 2025, event: "United States"}  # replaces 2025 Dutch, not in Fast Flag training
   - {season: 2025, event: "Singapore"}
   - {season: 2025, event: "Abu Dhabi"}
