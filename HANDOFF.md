@@ -64,8 +64,8 @@ triggers. Delivered with a pit-wall dashboard and an Arduino "BOX" pit board.
 
 - src/safety_car.py: SC / VSC / RED events from the track status feed (counts match race
   control in all 27 races) and train-only deployment rates
+- src/overtakes.py: passes and close battles from lap-end order
 ### Not started
-- src/overtakes.py
 - Sanity plots (lap time vs tire age per compound; pit loss per track)
 - README.md (credit Naman for Fast Flag)
 
@@ -180,9 +180,21 @@ sc_rates.parquet (train races only)
   Lap-1 SC is a start hazard counted apart (p_sc_lap1 = 2 of 23 = 0.087). Per-lap
   rates shrunk to the global train rate with a 60-lap prior (1 to 3 races per track).
 
-overtakes.parquet (not built yet)
-  season, round, event, lap, overtaker, overtaken, pace_delta_s, tyre_age_delta,
+overtakes.parquet (all races, split column; fit on train only)
+  season, round, event, split, lap, overtaker, overtaken, pace_delta_s, tyre_age_delta,
   compound_pair, gap_before_s, drs_likely (gap < 1.0 s)
+  Pass = swap in lap-end order between laps k-1 and k, same lap number. Excludes lap 1,
+  SC / VSC / red laps and any car with an in-lap on k-1 or k or an out-lap on k.
+  pace_delta_s = overtaken minus overtaker recent pace (median of last 3 green laps),
+  tyre_age_delta = overtaken minus overtaker tyre life. Positive favours the overtaker.
+  953 passes, 15 to 60 per race; FastF1 Position agrees on 100% of them.
+
+battles.parquet (all races, split column)
+  season, round, event, split, lap, driver, ahead, gap_before_s, pace_delta_s,
+  tyre_age_delta, compound_pair, drs_likely, passed
+  Every car within 2.0 s of the eligible car directly ahead at the end of lap k-1.
+  11473 rows. Pass rate: 32% under 0.5 s, 6% at 0.5 to 1.0, 1% at 1.0 to 1.5.
+  Session 3 fits the pass model on these (failed attempts included).
 
 ## Cleaning rules
 - Drop from is_clean: pit in/out laps, lap 1, SC/VSC/red flag laps, deleted laps,
