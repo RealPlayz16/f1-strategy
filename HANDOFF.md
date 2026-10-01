@@ -430,7 +430,7 @@ Checks:
 - Joint (not one-at-a-time) Monte Carlo sweep over phi, D0, soft bias and pass scaling;
   report how much the strategy ranking changes.
 
-## Session 4 status: engine built, VALIDATION FAILED, stopped before the optimizer
+## Session 4 status: engine built, VALIDATION FAILED TWICE, documented limitation
 src/engine.py, replay of all 23 train races with each car's measured free-air pace (oracle,
 actual strategies), 20 replays each:
 - Following curve, simulated vs target (lap time minus free-air pace by gap):
@@ -444,9 +444,22 @@ actual strategies), 20 replays each:
   where stuck cars end up, used as a floor, so it binds on followers that were never held
   up: followers NOT faster than the car ahead lose 0.54 s at 0.5-1 s and 0.20 s at 1-1.5 s,
   where only the aero penalty (about 0.17 and 0) should apply.
-- Proposed fix, not applied: replace the sampled floor with a small physical minimum gap
-  set independently of the following curve (otherwise the validation tunes it). Then
-  re-run the same validation unchanged.
+- Fix applied (user decision): stated constant min_gap = 0.2 s (not from data: every gap
+  statistic comes from the same following laps as the validation curve), to be swept 0.1
+  to 0.4. Re-run, same validation unchanged:
+    0-0.5 0.48 | 0.5-1 0.26 | 1-1.5 0.02 | 1.5-2 0.01 | 2-3 0.00; passes 124.9 per race.
+  MISSES in the other direction: with a 0.2 s floor cars bunch into trains and every
+  bunched pair draws a pass each lap. The two versions bracket reality; the true following
+  distance is state dependent (aero keeps a held car about 0.5 s+ back). The clean 2-3 s
+  bin misses in both (0.00 vs 0.04).
+- DECISION: stop, no third variant. Ship as a DOCUMENTED ENGINE LIMITATION and spend the
+  remaining time on Sessions 5 and 6. The optimizer, joint Monte Carlo and the comparison
+  with real strategies were NOT built.
+- What the engine can still be trusted for: pit loss, SC / VSC neutralisation and compound
+  rules on free-air pace. Not for traffic- or overtake-dependent strategy claims.
+- If revisited: a following model where the gap a held car settles at depends on its
+  free-air pace advantage and the dirty air penalty (no fixed floor), validated on the same
+  curve and on passes per race, with the 2-3 s bin as the clean test.
 
 ## Session 4 brief: race engine, DP optimizer, Monte Carlo
 The biggest build left. Inputs all exist; this session is simulation, not modelling.

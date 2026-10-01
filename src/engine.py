@@ -12,9 +12,14 @@ Each lap, for every car, front to back in the order at the end of the previous l
   within 1 s of the car ahead: + dirty_air_penalty(gap, d0)          (src/traffic.py)
   within 2 s: draw a pass, p = pass_scale * pass model               (src/overtake_model.py)
     pass:    finishes the lap ahead of that car
-    no pass: cannot finish ahead; sits a held gap behind (sampled from train battles that
-             lasted 3+ laps without a pass, median 0.94 s). Being held up comes from here,
-             never from the dirty air curve.
+    no pass: cannot finish ahead; must be at least min_gap behind at the line (0.2 s,
+             a STATED ASSUMPTION, swept 0.1 to 0.4 in the joint Monte Carlo). Being held
+             up comes from here, never from the dirty air curve.
+             Why a constant: every gap statistic we have comes from the same following
+             laps as the validation curve, so deriving it from data would make the
+             validation self-fulfilling. The first version sampled this gap from where
+             stuck cars end up (median 0.94 s) and used it as a floor; it bound on cars that
+             were never held up (Session 4 validation failure, see HANDOFF.md).
   a car pitting on this lap, or ahead of a car pitting, is not constrained (stops reorder)
 SC / VSC laps: every car runs the race's actual median lap time for that lap, no passing;
 at the end of an SC the field closes up to SC_RESTART_GAP_S per position.
@@ -24,6 +29,16 @@ Pace: a function (driver, lap, compound, tyre_life) -> free-air lap time in abso
 The validation replay uses each car's measured free-air pace (oracle, actual strategy),
 which tests the engine mechanics apart from tyre model error. Lap noise is sampled from
 free-air laps' deviation from free-air pace (train, heavy tailed: sd 0.52, robust 0.27).
+
+KNOWN LIMITATION (Session 4, validation failed twice, not iterated further by decision):
+oracle-pace replay of 23 train races, lap time minus free-air pace by gap, target from data
+0.80 / 0.33 / 0.21 / 0.14 / 0.04 s at 0-0.5 / 0.5-1 / 1-1.5 / 1.5-2 / 2-3 s.
+  sampled held-gap floor:  1.06 / 1.03 / 0.52 / 0.20 / 0.00, passes 54.7 per race vs 35.1
+  0.2 s minimum gap:       0.48 / 0.26 / 0.02 / 0.01 / 0.00, passes 124.9 per race vs 35.1
+The two versions bracket reality: the real following distance depends on the situation
+(aero keeps a held car about half a second or more back), a constant floor does not
+reproduce it. With the 0.2 s floor, cars bunch and every bunched pair draws a pass each lap.
+Do not use this engine for overtaking-dependent or traffic-dependent strategy claims.
 
 Usage:
     python -m src.engine            (validation replay on train races)
@@ -44,7 +59,6 @@ from src.rules import drs_enabled
 from src.traffic import DIRTY_AIR_D0_S, dirty_air_penalty
 
 STATE_PATH = Path("data/processed/traffic_laps.parquet")
-BATTLES_PATH = Path("data/processed/battles.parquet")
 PITLOSS_PATH = Path("data/processed/pitloss_by_track.parquet")
 SC_PATH = Path("data/processed/sc_events.parquet")
 PASS_MODEL_PATH = Path("data/models/pass_model.json")
@@ -55,7 +69,6 @@ SEED = 42
 BATTLE_GAP_S = 2.0
 SC_RESTART_GAP_S = 1.0
 PASS_MARGIN_S = 0.1
-HELD_MIN_BATTLE_LAPS = 3
 FALLBACK_QUANTILE = 0.25
 FOLLOW_TARGET = {"0-0.5": 0.80, "0.5-1": 0.33, "1-1.5": 0.21, "1.5-2": 0.14, "2-3": 0.04}
 GAP_BINS = [0.0, 0.5, 1.0, 1.5, 2.0, 3.0]
@@ -68,6 +81,7 @@ class Params:
     d0: float = DIRTY_AIR_D0_S
     soft_bias: float = 0.0
     pass_scale: float = 1.0
+    min_gap: float = 0.2
 
 
 @dataclass
@@ -102,16 +116,6 @@ class PassModel:
         x = pass_features(b, self.events)[self.columns]
         x[self.mean.index] = (x[self.mean.index] - self.mean) / self.std
         return 1.0 / (1.0 + np.exp(-(x.to_numpy() @ self.coef)))
-
-
-def held_gaps() -> np.ndarray:
-    b = pd.read_parquet(BATTLES_PATH)
-    b = b[b["split"] == "train"].sort_values(["season", "round", "driver", "lap"])
-    pair = b["driver"] + ">" + b["ahead"]
-    new = b.groupby(["season", "round", pair])["lap"].diff() != 1
-    run = new.groupby([b["season"], b["round"], pair]).cumsum()
-    lib = b.groupby([b["season"], b["round"], pair, run]).cumcount() + 1
-    return b.loc[(lib >= HELD_MIN_BATTLE_LAPS) & ~b["passed"], "gap_before_s"].to_numpy()
 
 
 def lap_noise(state: pd.DataFrame) -> np.ndarray:
@@ -182,7 +186,7 @@ def build_race(state: pd.DataFrame, sc: pd.DataFrame, pitloss: pd.DataFrame,
 
 # ---------- simulation ----------
 
-def simulate(race: Race, pace, params: Params, pass_model: PassModel, held: np.ndarray,
+def simulate(race: Race, pace, params: Params, pass_model: PassModel,
              noise: np.ndarray, rng: np.random.Generator,
              strategies: dict[str, dict[int, str]] | None = None) -> pd.DataFrame:
     """One race. pace(driver, lap, compound, tyre_life) -> free-air lap time.
@@ -249,13 +253,13 @@ def simulate(race: Race, pace, params: Params, pass_model: PassModel, held: np.n
                     if ok:
                         passes.add(d)
                         cand[d] = min(cand[d], cand[a] - PASS_MARGIN_S)
-            # resolve front to back so a held car is placed behind the car's final time
+            # resolve front to back: a car that did not pass stays at least min_gap behind
             for i in range(1, len(active)):
                 d, a = active[i], active[i - 1]
                 if d in pitting or a in pitting or d in passes:
                     continue
                 if t[d] - t[a] < BATTLE_GAP_S or cand[d] < cand[a]:
-                    cand[d] = max(cand[d], cand[a] + rng.choice(held))
+                    cand[d] = max(cand[d], cand[a] + params.min_gap)
         elif lap in race.sc_end_laps:
             order = sorted(active, key=cand.get)
             for k, d in enumerate(order[1:], start=1):
@@ -320,7 +324,7 @@ def main() -> int:
     state = oracle_pace(pd.read_parquet(STATE_PATH))
     sc = pd.read_parquet(SC_PATH)
     pitloss = pd.read_parquet(PITLOSS_PATH)
-    pm, held, noise = PassModel(), held_gaps(), lap_noise(state)
+    pm, noise = PassModel(), lap_noise(state)
     actual_passes = pd.read_parquet("data/processed/overtakes.parquet")
     rng = np.random.default_rng(SEED)
     params = Params()
@@ -339,7 +343,7 @@ def main() -> int:
         n_act = int(((actual_passes["season"] == season)
                      & (actual_passes["round"] == rnd)).sum())
         for i in range(N_REPLAYS):
-            sim = simulate(race, pace, params, pm, held, noise, rng)
+            sim = simulate(race, pace, params, pm, noise, rng)
             sim = sim[np.isfinite(sim["t"])]
             if i < 5:
                 curves.append(following_curve(sim, race))
