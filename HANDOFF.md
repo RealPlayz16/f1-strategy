@@ -1,5 +1,5 @@
 # HANDOFF: F1 Race Strategy Optimizer (Insane Version)
-Session 1 of 6 done | Started 1:40pm ET Sep 30 | Deadline Oct 1 11:59pm ET
+Sessions 1-2 of 6 done | Started 1:40pm ET Sep 30 | Deadline Oct 1 11:59pm ET
 Environment: Windows 11, PowerShell, venv at .venv, Python 3.11
 
 ## Project summary
@@ -11,7 +11,7 @@ triggers. Delivered with a pit-wall dashboard and an Arduino "BOX" pit board.
 
 ## Session roadmap
 1. Data foundation (DONE)
-2. Tire degradation model with uncertainty (LightGBM + PyTorch quantile)
+2. Tire degradation model with uncertainty (LightGBM + PyTorch quantile) (DONE)
 3. Overtaking model + race rules
 4. 20-car race engine + DP optimizer + Monte Carlo
 5. Live replay strategy engine + Fast Flag hook + backtest
@@ -274,22 +274,37 @@ INTERFACE CHANGE from the original brief. The brief said predict_laptime(feature
 - Session 4's DP optimizer must call it with h up to a full stint (trained on h in
   1,2,3,5,8,10,15,20,25,30).
 
-Held-out results (GroupKFold by race, train races):
-            below p10  above p90  width  MAE lgb  race offset sd
-  all          22.2%     14.3%    1.26   0.508   0.30
-  h=1          17.5      11.4     1.12   0.368   0.23
-  h=5          22.0      15.2     1.21   0.503   0.28
-  h=15         24.9      15.1     1.38   0.585   0.35
-  h=30         26.3      14.8     1.52   0.630   0.53
-- Width grows with h, as it should.
-- Below-p10 excess is the NET's location bias: net p50 sits 0.036 (h=1) to 0.104 s (h=30)
-  above the target; LightGBM's median is unbiased at every h, and net MAE is 15% worse.
-- Diagnostic only (not an output): net widths centred on the LightGBM median give
-  9.6/11.1 at h=1, 16.4/15.2 at h=5, 17.9/15.2 at h=15, 17.4/14.9 at h=30. What is left is
-  between-race variance, which grows with h: the job of fix 2 (quantiles trained on
-  out-of-race residuals).
-- Soft misses run the other way (11% below, 18% above) vs medium/hard (23% / 13-14%).
-- Final models not yet fitted (--no-final): predict_laptime needs data/models/tyre_net.pt.
+FINAL MODEL (two stages, ACCEPTED):
+- p50 = LightGBM median, all features.
+- p10 / p90 = p50 + offsets from a quantile net trained on LightGBM residuals from races
+  left out of an inner GroupKFold. The spread net only sees features that cannot identify
+  a race (h, tyre ages, compounds, fresh, stints_ahead). Do not give it event, driver,
+  team or temperatures: with them it learns each training race's offset and misses
+  24.4 / 14.7% (tested).
+- Models: data/models/tyre_lgb.txt and tyre_model.pt (plain state, not pickled
+  objects). Refit: python -m src.tyre --final-only.
+
+Held-out results (GroupKFold by race, train races), acceptance <15% / <15%, h=1 near 10%:
+            below p10  above p90  width  median resid  MAE    race offset sd
+  all          11.6%      9.8%    1.51     +0.013     0.508   0.17
+  h=1          10.7       9.0     1.14     +0.018     0.368   0.11
+  h=5          11.4       9.8     1.55     +0.005     0.503   0.19
+  h=15         11.4       9.6     1.86     +0.009     0.585   0.24
+  h=30         13.1      10.5     1.87     +0.006     0.630   0.36
+- Width grows with h but flattens from h=15 to 30 (1.86 -> 1.87) while misses creep up.
+  Fewer rows at h=30 (8408) and survivorship (only laps still clean 30 ahead). Watch it
+  in Session 4.
+- Quantile crossing 0.04%.
+
+SOFT BIAS (survives fix 2, not tuned away): soft p50 is too fast by 0.070 to 0.085 s at
+every horizon (median resid y - p50 = +0.075; MEDIUM -0.009, HARD +0.013). Calibration
+looks fine (soft 13.1 / 9.5%) because the intervals widened, and per-race offset sd for
+soft is 0.41 s vs 0.19-0.20. Consequence: the optimizer, which runs on p50, will favour
+soft strategies by about 0.075 s per soft lap (about 1.1 s over a 15-lap stint). Session 4
+must check soft-strategy choices against this, e.g. a sensitivity run with soft p50 + 0.075.
+
+History of the fix: fixed laps 5-10 reference 26.9 / 21.5%; re-anchored single net
+22.2 / 14.3% (net p50 biased 0.036 to 0.104 s slow, growing with h); two-stage 11.6 / 9.8%.
 
 ## Session 2: degradation (src/degradation.py)
 - Within stint, never pooled. Median slope per (race, compound), A pooled-K / B joint:
@@ -309,7 +324,42 @@ Held-out results (GroupKFold by race, train races):
   removed 21.6/16.8 -> 20.9/16.9, race offset sd 0.66 -> 0.60, MAE 0.646 -> 0.625.
   The start-compound bias was real but small.
 
-## Next session (2) preview
-Tire model: per-race baseline fit, cross-race LightGBM, PyTorch quantile model
-(p10/p50/p90), cliff detection, held-out MAE and calibration.
-Interface target: predict_laptime(features) -> (p10, p50, p90)
+Cliff detection was skipped in Session 2 (user decision: time).
+
+## Session 3 brief: overtaking model and race rules
+Mostly modelling on data we already have. No new extraction needed.
+
+Inputs (train split only, via src/splits.py; holdout never touches a fit):
+- battles.parquet: 11473 car-behind / car-ahead pairs within 2.0 s at the end of lap k-1,
+  with passed flag. Includes the failed attempts. Base pass rates: 32% under 0.5 s, 6% at
+  0.5-1.0, 1% at 1.0-1.5, 0.6% at 1.5-2.0.
+- overtakes.parquet: 953 passes (all pairs, not only adjacent), FastF1 Position agrees.
+- laps_fuel_corrected.parquet with gap_ahead_s, for the cost of following.
+
+Deliverables:
+1. src/overtake_model.py: P(pass on lap | gap_before_s, pace_delta_s, tyre_age_delta,
+   compound_pair, drs_likely, track). GroupKFold by race. Report reliability (predicted vs
+   observed by probability bin) on held-out races; reproduce the base rates by gap bin.
+   Track overtaking difficulty from 1 to 3 races per event: shrink toward the global rate.
+2. Following cost: lap time lost when running within X s of the car ahead, as a function
+   of gap, within stint on fuel-corrected laps (degradation.py found gap < 1 s costs
+   0.14 to 0.53 s). The race engine needs it to make undercuts and traffic real.
+3. Race rules module for the Session 4 engine: two dry compounds required, no passing
+   under SC / VSC, DRS off for the first 2 laps and after restarts, SC queue compression
+   and lapped cars, pit stop under SC (pit loss from pitloss_by_track with PHI). Write
+   each rule as a tested function; cite the source of each rule.
+
+Identification risks to check before fitting (Session 1-2 lesson: an uncontrolled
+variable was larger than the effect three times):
+- pace_delta_s comes from recent laps of a car that may be stuck behind (dirty air), so
+  the follower's true pace is censored, and the censoring is worst exactly in close battles.
+- pace_delta_s and tyre_age_delta are correlated (fresher tyres are faster).
+- Track difficulty is confounded with which battles occur (Monza vs Hungary).
+- Selection: pairs that stay close for many laps are the ones where passing failed.
+- The passed flag compares lap-end order; a pass and re-pass within a lap is invisible.
+
+Carry forward to Session 4:
+- PHI validation against observed position loss (see above).
+- Soft p50 bias +0.075 s (see the tyre model section).
+- Interval width flattening between h=15 and h=30.
+- predict_laptime is horizon dependent and needs anchors (interface change above).

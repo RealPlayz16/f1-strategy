@@ -2,7 +2,17 @@ import numpy as np
 import pandas as pd
 import torch
 
-from src.tyre import HORIZONS, WINDOW_START, Encoder, build_frame, compute_anchors, pinball
+from src.tyre import (
+    CATS,
+    HORIZONS,
+    NUMS,
+    SPREAD_FEATURES,
+    WINDOW_START,
+    Encoder,
+    build_frame,
+    compute_anchors,
+    pinball,
+)
 
 
 def _laps(n=40):
@@ -55,13 +65,22 @@ def test_holdout_never_in_frame():
 
 def test_pinball_is_quantile_loss():
     y = torch.tensor([1.0])
-    pred = torch.tensor([[0.0, 1.0, 2.0]])
-    expected = (0.1 * 1 + 0 + (1 - 0.9) * 1) / 3
+    pred = torch.tensor([[0.0, 2.0]])  # p10 below by 1, p90 above by 1
+    expected = (0.1 * 1 + (1 - 0.9) * 1) / 2
     assert np.isclose(pinball(pred, y).item(), expected)
 
 
-def test_unknown_category_maps_to_zero():
+def test_unknown_category_maps_to_zero_and_state_roundtrips():
     df = build_frame(_laps())
-    enc = Encoder(df)
+    enc = Encoder(df, CATS, NUMS)
     _, cat = enc(df.head(1).assign(event="Unseen Grand Prix"))
-    assert cat[0, 2].item() == 0
+    assert cat[0, CATS.index("event")].item() == 0
+    back = Encoder.from_state(enc.state())
+    a, b = enc(df.head(3)), back(df.head(3))
+    assert torch.equal(a[0], b[0]) and torch.equal(a[1], b[1])
+
+
+def test_spread_features_cannot_identify_a_race():
+    cats, nums = SPREAD_FEATURES["tyre"]
+    for col in ("event", "driver", "team", "track_temp", "air_temp"):
+        assert col not in cats + nums
