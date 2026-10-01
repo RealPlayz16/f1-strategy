@@ -235,6 +235,20 @@ battles.parquet (all races, split column)
   phi to be fitted from the SC discount instead. Telemetry route declined.
 - Holdout races excluded from all fits
 
+## Session 2: race-progress correction (src/fuel.py, done)
+- lap_time_fc_s = lap_time_s - K * laps_remaining / race_laps. K = 3.249 s per race,
+  fitted on 22 train races (2024 Saudi excluded from the K fit only: one stint after the
+  lap 7 SC, no between-stint variation). 0.0565 s/lap at a median 58-lap race.
+- K is fuel plus track evolution, NOT fuel. Never call it a fuel coefficient.
+- By season 3.18 / 3.26 / 3.32 (slight upward drift, watch it). Free air K 3.07
+  (0.0473 s/lap per-lap form): traffic inflates the slope a little.
+- Scaling check: per-race slopes vs 1 / race_laps r = 0.54. Built into the module.
+- Rejected: per (race, driver, stint, compound) intercepts. tyre_life and laps_remaining
+  are collinear within a stint, so it estimates fuel minus degradation (0.0043).
+- Any error in K moves within-stint degradation estimates one for one (K / race_laps).
+- Outputs: laps_fuel_corrected.parquet (all laps, adds race_laps, progress_s,
+  lap_time_fc_s), fuel_fit.json.
+
 ## Next session (2) preview
 Tire model: per-race baseline fit, cross-race LightGBM, PyTorch quantile model
 (p10/p50/p90), cliff detection, held-out MAE and calibration.

@@ -71,6 +71,15 @@ The first ingest downloads race data into `data/cache/`. Outputs land in
 - **Race control message times are wall clock.** Timed events come from the track status
   feed, which is on session time: the same clock as lap data and Fast Flag.
 
+## Session 2: race progress and tyres
+
+- `src/fuel.py` removes the race-progress effect:
+  `lap_time_fc_s = lap_time_s - K * laps_remaining / race_laps`, K = 3.25 s per race on
+  train races. **K is fuel burn plus track evolution, not a fuel coefficient.** Both change
+  with race lap, so lap timing cannot separate them. For lap time prediction the combination
+  is what we want. Per-race slopes scale with 1 / race_laps (fuel per lap grows with lap
+  length), which is consistent with fuel dominating; the check re-runs on every fit.
+
 ## Credits
 
 - [Fast Flag](https://github.com/Pseudocoder28/Fast-Flag), the AI race control assistant
