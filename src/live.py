@@ -90,7 +90,9 @@ def load_recs(rid: str, ff_dir: Path = FAST_FLAG_DIR) -> pd.DataFrame:
     with gzip.open(ff_dir / "data/timeline" / f"{rid}.json.gz", "rt", encoding="utf-8") as f:
         ticks = json.load(f)["ticks"]
     recs = [e["data"] for tick in ticks for e in tick if e["kind"] == "rec"]
-    df = pd.DataFrame(recs)
+    cols = ["id", "t", "msector", "flag", "confidence", "reason", "message",
+            "source_detections"]
+    df = pd.DataFrame(recs, columns=cols) if recs else pd.DataFrame(columns=cols)
     keep = df["flag"].isin(["SC", "VSC", "RED"]) | (df["message"] == "TRACK CLEAR")
     return df[keep].sort_values("t").reset_index(drop=True)
 
@@ -264,25 +266,33 @@ def decide(state: RaceState, driver: str, laps_all_cols: pd.DataFrame, kind: str
     neutral_laps = set(range(pit_lap, pit_lap + NEUTRAL_LAPS.get(kind, 1)))
     laps = range(pit_lap + 1, race_laps + 1)
 
-    scored = {}
+    if not plans["pit_now"] or not plans["stay_out"]:
+        return {**out, "decision": "no legal plan in one family"}
+    # one batched prediction for every plan of this car
+    frames, meta = [], []
     for family, options in plans.items():
-        best = None
-        for stops in options:
+        for k, stops in enumerate(options):
             rows = pd.DataFrame(plan_rows(base, laps, stops, compound_now, age_at_pit,
                                           int(a["lap"])))
-            rows["laps_remaining"] = race_laps - rows["lap"]
-            rows = rows[~rows["lap"].isin(neutral_laps)]
-            p10, p50, p90 = predict_laptime(rows)
-            soft = (rows["compound_f"] == "SOFT").to_numpy() * soft_bias
-            q = np.column_stack([p10 + soft, p50 + soft, p90 + soft])
-            n_stops_later = sum(1 for lap in stops if lap != pit_lap)
-            total50 = q[:, 1].sum()
-            if best is None or total50 + n_stops_later * pitloss["green"] < best["p50"]:
-                best = {"stops": stops, "q": q, "p50": total50 + n_stops_later * pitloss["green"],
-                        "h": rows["h"].to_numpy(), "later_stops": n_stops_later}
-        scored[family] = best
-    if not scored["pit_now"] or not scored["stay_out"]:
-        return {**out, "decision": "no legal plan in one family", "plans": plans}
+            rows["plan"] = len(meta)
+            frames.append(rows)
+            meta.append((family, k, stops))
+    rows = pd.concat(frames, ignore_index=True)
+    rows["laps_remaining"] = race_laps - rows["lap"]
+    rows = rows[~rows["lap"].isin(neutral_laps)].reset_index(drop=True)
+    p10, p50, p90 = predict_laptime(rows)
+    soft = (rows["compound_f"] == "SOFT").to_numpy() * soft_bias
+    rows["q10"], rows["q50"], rows["q90"] = p10 + soft, p50 + soft, p90 + soft
+    scored = {}
+    for pid, g in rows.groupby("plan"):
+        family, _, stops = meta[pid]
+        later = sum(1 for lap in stops if lap != pit_lap)
+        total = g["q50"].sum() + later * pitloss["green"]
+        if family not in scored or total < scored[family]["p50"]:
+            scored[family] = {"stops": stops, "q": g[["q10", "q50", "q90"]].to_numpy(),
+                              "p50": total, "h": g["h"].to_numpy(), "later_stops": later}
+    # Selecting the best of many plans on p50 favours plans whose p50 is optimistic
+    # (winner's curse); the governing risk in HANDOFF applies here in small form.
 
     pn, so = scored["pit_now"], scored["stay_out"]
     phi_draw = rng.uniform(*PHI_RANGE, N_DRAWS)
@@ -304,6 +314,26 @@ def decide(state: RaceState, driver: str, laps_all_cols: pd.DataFrame, kind: str
             "gain_if_real_s": [float(np.quantile(gain_real, x)) for x in (0.1, 0.5, 0.9)],
             "gain_if_false_s": [float(np.quantile(gain_false, x)) for x in (0.1, 0.5, 0.9)],
         }
+    # Break-even precision: act on the call (pit) when P(call real) > p*, from median gains
+    # at a fixed phi (rho 0.5). Free-air time only: the track-position benefit of an SC stop
+    # is not modelled, so gain_real is understated and p* is an UPPER BOUND.
+    z = rng.multivariate_normal([0, 0], [[1, 0.5], [0.5, 1]], N_DRAWS)
+    u = norm.cdf(z)
+    t_pn_lap = quantile_sum(pn["q"], u[:, 0]) + pn["later_stops"] * green
+    t_so = quantile_sum(so["q"], u[:, 1]) + so["later_stops"] * green
+    break_even = {}
+    for phi in (PHI_RANGE[0], PHI, PHI_RANGE[1]):
+        g_real = float(np.median(t_so - (t_pn_lap + green - phi
+                                           * pitloss[f"delta_lap_{kind.lower()}"])))
+        g_false = float(np.median(t_so - (t_pn_lap + green)))
+        if g_false >= 0:
+            p_star = 0.0             # pitting wins even if the call is false
+        elif g_real <= 0:
+            p_star = None            # pitting loses even if the call is real
+        else:
+            p_star = -g_false / (g_real - g_false)
+        break_even[phi] = {"gain_if_real_s": g_real, "gain_if_false_s": g_false,
+                           "p_star": p_star}
     ps = [r["p_pit_better"] for r in results.values()]
     verdict = ("pit" if min(ps) > 0.8 else "stay out" if max(ps) < 0.2
                else "overlapping: the model cannot separate the two plans")
@@ -312,7 +342,8 @@ def decide(state: RaceState, driver: str, laps_all_cols: pd.DataFrame, kind: str
         **out, "decision": verdict, "pit_lap": pit_lap, "compound_now": compound_now,
         "tyre_age_at_pit": age_at_pit, "p_call_real": p_real,
         "pit_now_plan": pn["stops"], "stay_out_plan": so["stops"],
-        "by_rho": results, "share_laps_h_gt_15": float((h_all > 15).mean()),
+        "by_rho": results, "break_even": break_even,
+        "share_laps_h_gt_15": float((h_all > 15).mean()),
         "share_laps_h_gt_30": float((h_all > 30).mean()), "soft_bias_s": soft_bias,
     }
 
