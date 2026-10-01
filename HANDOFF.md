@@ -1,5 +1,6 @@
 # HANDOFF: F1 Race Strategy Optimizer (Insane Version)
-Sessions 1-3 of 6 done | Started 1:40pm ET Sep 30 | Deadline Oct 1 11:59pm ET
+Sessions 1-5 of 6 done (Session 4 engine with a documented limitation) | Started 1:40pm ET
+Sep 30 | Deadline Oct 1 11:59pm ET
 Environment: Windows 11, PowerShell, venv at .venv, Python 3.11
 
 ## Project summary
@@ -13,8 +14,9 @@ triggers. Delivered with a pit-wall dashboard and an Arduino "BOX" pit board.
 1. Data foundation (DONE)
 2. Tire degradation model with uncertainty (LightGBM + PyTorch quantile) (DONE)
 3. Overtaking model + race rules (DONE)
-4. 20-car race engine + DP optimizer + Monte Carlo
-5. Live replay strategy engine + Fast Flag hook + backtest
+4. 20-car race engine + DP optimizer + Monte Carlo (engine only, failed validation,
+   documented limitation; optimizer and Monte Carlo not built)
+5. Live replay strategy engine + Fast Flag hook + backtest (DONE)
 6. Pit-wall dashboard + Arduino pit board + README/demo
 
 ## Working style
@@ -34,8 +36,8 @@ triggers. Delivered with a pit-wall dashboard and an Arduino "BOX" pit board.
 - ruff line-length 100, select E F I UP B
 - PowerShell writes BOMs with Set-Content -Encoding utf8. Use
   [System.IO.File]::WriteAllText to avoid breaking the TOML parser
-- Holdout races (2025 Japanese, Dutch, Singapore, Abu Dhabi) are excluded from
-  every fit: phi, pit loss medians, SC rates, tire models
+- Holdout races (2025 Japanese, United States, Singapore, Abu Dhabi) are excluded from
+  every fit: phi, pit loss medians, SC rates, tyre models
 
 ## Current state
 
@@ -72,7 +74,6 @@ triggers. Delivered with a pit-wall dashboard and an Arduino "BOX" pit board.
   check in Session 2.
 - README.md (credits Naman for Fast Flag)
 
-Session 1 complete. Next: Session 2.
 
 ## Session 4 task: validate PHI against position loss
 PHI = 0.08 is a stated assumption, not a measurement. In Session 4, validate it against
