@@ -249,6 +249,29 @@ battles.parquet (all races, split column)
 - Outputs: laps_fuel_corrected.parquet (all laps, adds race_laps, progress_s,
   lap_time_fc_s), fuel_fit.json.
 
+## Session 2: tyre model (src/tyre.py) - calibration FAILS, awaiting decision
+- Target y = lap_time_fc_s - race_ref_s (field median fc clean lap, laps 2-10, causal);
+  driver_pace_s from the same window. Modelled laps > 10. GroupKFold(5) by race, train only.
+- Held-out: below p10 27.5%, above p90 21.9% (target 10 / 10). MAE LightGBM 0.646 s,
+  net 0.718, predicting zero 0.876. Crossing 0.1%.
+- Cause: per-race offset sd 0.66 s held out vs 0.043 in sample. The net identifies each
+  training race (event + temps) and learns its level, so quantiles carry only within-race
+  noise. Residual drift vs lap correlates 0.58 with the race's progress-slope deviation.
+  The laps 2-10 reference also carries the race-start bump below.
+- Do not tune until the user picks a fix.
+
+## Session 2: degradation (src/degradation.py)
+- Within stint, never pooled. Median slope per (race, compound), A pooled-K / B joint:
+  SOFT 0.079 / 0.087, MEDIUM 0.052 / 0.049, HARD 0.059 / 0.053 s per lap. A vs B r 0.88.
+- Paired within race: SOFT minus MEDIUM +0.017 (A) / +0.012 (B), 82% / 73% of 11 races.
+  HARD minus MEDIUM 0.000, 50% of 20 races: no deg difference between hard and medium.
+- Curves beyond about 25 laps drop or flatten: survivorship (only low-deg long stints).
+- Early bump (ages 2-4 above the within-stint trend on 5-15) is NOT soft-specific and NOT
+  explained by gap_ahead_s. Race-start stints: SOFT 0.26, MEDIUM 0.58, HARD 0.70 s; with
+  gap controls 0.32 / 0.59 / 0.71. Later stints: 0.07 to 0.25. Reading: a fresh-tyre
+  warm-up effect in every stint plus a larger race-start effect (non-linear early track
+  evolution, trains beyond 1 s, DRS off on lap 2 are candidates; lap data cannot separate).
+
 ## Next session (2) preview
 Tire model: per-race baseline fit, cross-race LightGBM, PyTorch quantile model
 (p10/p50/p90), cliff detection, held-out MAE and calibration.
