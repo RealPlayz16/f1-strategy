@@ -411,6 +411,43 @@ src/rules.py: compound rule, no overtaking under SC / VSC / red, DRS availabilit
 by condition (free under red), stint caps SOFT 28 / MEDIUM 46 / HARD 53 (longest pit-ended
 train stints; a floor), optional race tyre limit. Article numbers unverified.
 
+## SESSION 4 GOVERNING RISK: the optimizer selects for our biases
+A DP optimizer searches for the strategy that maximises the modelled outcome, so it
+systematically selects the strategies our known biases flatter. These do not average out;
+the optimizer actively steers toward them:
+- softs: tyre model soft p50 understated by 0.075 s/lap
+- overtake-dependent strategies: pass model 15% high overall, about 70% high at unseen
+  tracks (15.2% vs 8.9%), top bucket 0.75 vs 0.64
+- long stints: h = 30 tyre intervals are a floor (survivorship)
+Checks:
+- On train races compare the optimizer's choice with what teams ran (stops, compounds,
+  passes needed). Report it whatever it shows. Differences also contain team constraints
+  we do not model (tyre-set availability above all), so also run it with the bias knobs
+  neutralised (soft +0.075, pass probabilities scaled down): the part of the gap that
+  closes is attributable to our bias.
+- Tyre model predictions for a train race come from the CV fold model that did not see it,
+  so the bias is present as in deployment.
+- Joint (not one-at-a-time) Monte Carlo sweep over phi, D0, soft bias and pass scaling;
+  report how much the strategy ranking changes.
+
+## Session 4 status: engine built, VALIDATION FAILED, stopped before the optimizer
+src/engine.py, replay of all 23 train races with each car's measured free-air pace (oracle,
+actual strategies), 20 replays each:
+- Following curve, simulated vs target (lap time minus free-air pace by gap):
+    0-0.5 1.055 vs 0.80 | 0.5-1 1.028 vs 0.33 | 1-1.5 0.516 vs 0.21 | 1.5-2 0.196 vs 0.14
+    | 2-3 0.001 vs 0.04. FAILS at 0.5-1.5 s.
+- Passes per race 54.7 simulated vs 35.1 actual. Close-battle laps 512 vs 415 per race.
+- Finishing order plausible (Spearman 0.945, mean position error 1.2, winner right 64%,
+  median gap error 12 s), but with oracle pace this is a weak test.
+- CAUSE (confirmed on simulated laps): the no-pass rule puts the follower a "held gap"
+  behind, sampled from gaps in long battles (median 0.94 s). That is the distribution of
+  where stuck cars end up, used as a floor, so it binds on followers that were never held
+  up: followers NOT faster than the car ahead lose 0.54 s at 0.5-1 s and 0.20 s at 1-1.5 s,
+  where only the aero penalty (about 0.17 and 0) should apply.
+- Proposed fix, not applied: replace the sampled floor with a small physical minimum gap
+  set independently of the following curve (otherwise the validation tunes it). Then
+  re-run the same validation unchanged.
+
 ## Session 4 brief: race engine, DP optimizer, Monte Carlo
 The biggest build left. Inputs all exist; this session is simulation, not modelling.
 
