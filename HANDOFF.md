@@ -65,8 +65,12 @@ triggers. Delivered with a pit-wall dashboard and an Arduino "BOX" pit board.
 - src/safety_car.py: SC / VSC / RED events from the track status feed (counts match race
   control in all 27 races) and train-only deployment rates
 - src/overtakes.py: passes and close battles from lap-end order
+- src/plots.py: figures/laptime_vs_tyre_age.png and figures/pitloss_by_race.png
+  (figures/ is gitignored, regenerate with python -m src.plots). Degradation about
+  0.04 to 0.05 s per lap on every compound after a 0.05 s/lap fuel adjustment. Soft laps
+  at tyre age 2 to 4 sit above the soft trend, likely race laps 2 to 4 in DRS trains:
+  check in Session 2.
 ### Not started
-- Sanity plots (lap time vs tire age per compound; pit loss per track)
 - README.md (credit Naman for Fast Flag)
 
 ## Session 4 task: validate PHI against position loss
