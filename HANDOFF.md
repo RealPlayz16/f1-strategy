@@ -462,6 +462,78 @@ actual strategies), 20 replays each:
   free-air pace advantage and the dirty air penalty (no fixed floor), validated on the same
   curve and on passes per race, with the 2-3 s bin as the clean test.
 
+## Session 5 results (done): live Fast Flag decision system
+FRAMING (use these words): a working live decision system, demonstrated end to end, with
+honest uncertainty. Not a validated strategy system. The holdout has one real
+neutralisation (2025 United States, VSC lap 7); one real neutralisation cannot validate
+anything. Full report: docs/session5_results.md (python -m src.live_report).
+
+Built:
+- src/live.py: Fast Flag recs from ~/fast-flag/data/timeline/<race>.json.gz (--case
+  builds, Naman's models untouched), clock check vs sc_events (2025 US: 0.28 s),
+  call_probability from Fast Flag's out-of-sample scorecard (SC 10/23 = 0.44, VSC 12/21 =
+  0.57, Beta intervals), ReplayDriver (state as of session time; leak tests), decide()
+  (pit-now vs stay-out on free-air time, tyre p10/p50/p90 through split normals, plans
+  fully correlated within, P(pit better) at rho 0 / 0.5 / 0.9, phi swept, break-even p*,
+  accounts-for / does-not-account-for lists in every output).
+- src/backtest.py: call episodes, matching, decisions at calls and at deployments, early
+  call windows, team actions, --break-even hypothetical calls every 10 laps.
+- src/live_report.py: docs/session5_results.md.
+
+Findings:
+- BLIND WINDOW (headline): Fast Flag called the 2025 US incident at the end of lap 5, 61.2 s
+  before race control's VSC. The tyre model anchors on >= 2 clean laps from lap 5 (laps
+  2-4 skipped, early-stint effect), so no decision is possible before about lap 6-7: the
+  lead time bought nothing on the one real event. 4 of 19 train neutralisations deployed
+  before lap 6, 1 more on lap 7. Fix (future work): a shorter anchor or a prior-race /
+  qualifying pace fallback for the opening laps, validated like the Session 2 model.
+- Early call: 17 of 20 cars gained a pit window from the 61 s lead; for none was the
+  no-call window outside the VSC (213 s). The call confirmed earlier, it changed no car's
+  options. 32.6 s (Fast Flag median lead) is 0.33-0.36 laps at the holdout tracks.
+- False calls: one in the holdout (Singapore, SC call about lap 44, no neutralisation).
+  16 of 20 cars would have pitted on it, median free-air gain +1.0 s (in their window
+  anyway). Japan: no recs; Abu Dhabi: yellows only.
+- Break-even (724 hypothetical calls, every 10th lap, every car): pitting wins even if the
+  call is false in 38%; loses even if real in 44-58%. At phi 0.08 acting on Fast Flag's
+  precision beats ignoring in 44% (SC) / 49% (VSC), but the call changes the decision in
+  only 6 / 11 points of that. Every p* is an upper bound (track position not priced).
+- 2025 US no-call path (synthetic, P = 1 at the deployment): all 15 decidable cars
+  "overlapping"; pitting at lap 7 wins on the median only for soft starters. Soft + 0.075
+  flips 1 of 15. 41% of plan laps are beyond h = 30 (floor).
+- Two analysis bugs found and fixed mid-session, both from consistency checks on the
+  break-even table: (1) pit-now plans ignored the stop at pit_lap (035cd85); (2) the
+  false-call branch dropped the would-be neutralised laps (d28803b; SC and VSC "pit anyway"
+  disagreed 7% vs 38%, now both 38%). Every number above is after both fixes.
+
+## Session 6 brief: pit-wall dashboard, README, demo
+The demo is what makes Sessions 4-5 showable. Protect the time; build nothing new in the
+models.
+
+Dashboard (FastAPI + a static page, uvicorn, localhost):
+- Replay a holdout race lap by lap using ReplayDriver (never shows the future): running
+  order, tyres, Fast Flag recs as they arrive, official SC / VSC.
+- On a call or a deployment, show the decide() output per car: P(pit better) at the three
+  rho values as a range, gain distributions (p10 / p50 / p90), the verdict
+  ("overlapping" shown as such, never coloured as a recommendation), and the accounts-for /
+  does-not-account-for lists on screen.
+- Show the blind window explicitly: before the anchor exists, the card says "no decision:
+  model has no anchor yet (laps 2-4 skipped)", not a blank.
+- Demo races: 2025 United States (real VSC, lap 5 call, blind window) and 2025 Singapore
+  (false SC call). Precompute decisions (backtest_decisions.parquet) so the page is fast.
+- Arduino "BOX" board: optional, only after the page works. Fast Flag's serial protocol is
+  in PROJECT_BRIEF 7.7 of the Fast Flag repo; ours would be a separate one-line message.
+
+README (what a reviewer opens first):
+- Top: what it is, the n=1 statement in the framing words above, the blind-window finding
+  as a finding (not under limitations).
+- Credits: Fast Flag is a separate two-person project (Naman, main builder; Ishaan) that
+  this project consumes as an input; the strategy work here is solo. The 0.435 SC precision
+  is Fast Flag's own measured out-of-sample number.
+- Honest limitations: engine failed validation (traffic), SC pit loss phi stated not
+  measured, soft p50 bias, h=30 floor, pass model over-predicts on unseen tracks.
+
+Carries: none of the Session 4 optimizer work exists; do not demo strategy rankings.
+
 ## Session 4 brief: race engine, DP optimizer, Monte Carlo
 The biggest build left. Inputs all exist; this session is simulation, not modelling.
 

@@ -109,9 +109,9 @@ def false_call_section(dec: pd.DataFrame, races: list[dict]) -> list[str]:
         cost = trig["gain_if_false_p50_rho0.5"]
         out.append(f"- {e['race']} episode {e['episode']}: {len(decided)} cars with a decision, "
                    f"{len(trig)} would have pitted (P >= {TRIGGER_P} at rho 0.5); median "
-                   f"cost of pitting on the false call "
-                   f"{(-cost).median() if len(cost) else float('nan'):.1f} s "
-                   f"(free-air time).")
+                   f"free-air time change from pitting on the false call: "
+                   f"{cost.median() if len(cost) else float('nan'):+.1f} s (positive = a gain: "
+                   f"those cars were in their pit window anyway).")
     return out + [""]
 
 
