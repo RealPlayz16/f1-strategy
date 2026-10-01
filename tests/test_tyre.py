@@ -2,13 +2,13 @@ import numpy as np
 import pandas as pd
 import torch
 
-from src.tyre import REF_LAPS, Encoder, build_frame, pinball
+from src.tyre import HORIZONS, WINDOW_START, Encoder, build_frame, compute_anchors, pinball
 
 
-def _laps():
+def _laps(n=40):
     rows = []
-    for drv, pace in (("VER", 0.0), ("HAM", 0.5)):
-        for lap in range(1, 21):
+    for drv, pace in (("VER", 0.0), ("HAM", 0.5), ("LEC", 0.2)):
+        for lap in range(1, n + 1):
             rows.append(
                 {
                     "season": 2024, "round": 1, "event": "Italian Grand Prix", "driver": drv,
@@ -21,15 +21,30 @@ def _laps():
     return pd.DataFrame(rows)
 
 
-def test_reference_window_is_causal():
+def test_anchor_skips_race_start_and_is_causal():
+    laps = _laps()
+    a = compute_anchors(laps[laps["is_clean"]])
+    assert a["lap"].min() >= WINDOW_START + 1  # needs 2 driver laps from lap 5 on
+    before = a[(a["driver"] == "HAM") & (a["lap"] == 10)]["anchor_s"].iloc[0]
+    changed = laps.copy()
+    changed.loc[changed["lap"] > 10, "lap_time_fc_s"] += 5.0  # the future must not matter
+    after = compute_anchors(changed[changed["is_clean"]])
+    after = after[(after["driver"] == "HAM") & (after["lap"] == 10)]["anchor_s"].iloc[0]
+    assert np.isclose(before, after)
+
+
+def test_anchor_carries_driver_gap():
+    a = compute_anchors(_laps()[lambda d: d["is_clean"]]).set_index(["driver", "lap"])
+    # HAM is 0.3 s slower than the per-lap field median (LEC) on every lap
+    assert np.isclose(a.loc[("HAM", 20), "anchor_s"] - a.loc[("HAM", 20), "field_ref_s"], 0.3)
+
+
+def test_frame_targets_are_future_laps():
     df = build_frame(_laps())
-    lo, hi = REF_LAPS
-    assert df["lap"].min() == hi + 1  # only laps after the window are modelled
-    window = _laps().query("@lo <= lap <= @hi")
-    ref = window["lap_time_fc_s"].median()
-    assert np.allclose(df["race_ref_s"], ref)
-    ham = window[window["driver"] == "HAM"]["lap_time_fc_s"].median() - ref
-    assert np.allclose(df.loc[df["driver"] == "HAM", "driver_pace_s"], ham)
+    assert set(df["h"]) <= set(HORIZONS)
+    assert (df["lap_f"] == df["lap"] + df["h"]).all()
+    row = df[(df["driver"] == "VER") & (df["lap"] == 10) & (df["h"] == 5)].iloc[0]
+    assert np.isclose(row["y"], (80.0 + 0.05 * 15) - row["anchor_s"])
 
 
 def test_holdout_never_in_frame():
@@ -40,7 +55,7 @@ def test_holdout_never_in_frame():
 
 def test_pinball_is_quantile_loss():
     y = torch.tensor([1.0])
-    pred = torch.tensor([[0.0, 1.0, 2.0]])  # p10 below by 1, p50 exact, p90 above by 1
+    pred = torch.tensor([[0.0, 1.0, 2.0]])
     expected = (0.1 * 1 + 0 + (1 - 0.9) * 1) / 3
     assert np.isclose(pinball(pred, y).item(), expected)
 
@@ -48,6 +63,5 @@ def test_pinball_is_quantile_loss():
 def test_unknown_category_maps_to_zero():
     df = build_frame(_laps())
     enc = Encoder(df)
-    other = df.head(1).assign(event="Unseen Grand Prix")
-    _, cat = enc(other)
-    assert cat[0, 1].item() == 0
+    _, cat = enc(df.head(1).assign(event="Unseen Grand Prix"))
+    assert cat[0, 2].item() == 0

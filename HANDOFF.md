@@ -249,7 +249,7 @@ battles.parquet (all races, split column)
 - Outputs: laps_fuel_corrected.parquet (all laps, adds race_laps, progress_s,
   lap_time_fc_s), fuel_fit.json.
 
-## Session 2: tyre model (src/tyre.py) - calibration FAILS, awaiting decision
+## Session 2: first tyre model, fixed reference (SUPERSEDED by the re-anchored model below)
 - Target y = lap_time_fc_s - race_ref_s (field median fc clean lap, laps 2-10, causal);
   driver_pace_s from the same window. Modelled laps > 10. GroupKFold(5) by race, train only.
 - Held-out: below p10 27.5%, above p90 21.9% (target 10 / 10). MAE LightGBM 0.646 s,
@@ -258,7 +258,38 @@ battles.parquet (all races, split column)
   training race (event + temps) and learns its level, so quantiles carry only within-race
   noise. Residual drift vs lap correlates 0.58 with the race's progress-slope deviation.
   The laps 2-10 reference also carries the race-start bump below.
-- Do not tune until the user picks a fix.
+- User chose: fix the anchor window, then re-anchor (1), then quantiles on out-of-race
+  residuals (2) only if 1 leaves misses above about 15%.
+
+## Session 2: re-anchored tyre model (current src/tyre.py)
+INTERFACE CHANGE from the original brief. The brief said predict_laptime(features) ->
+(p10, p50, p90). A fixed reference cannot carry the race level to unseen races (offset sd
+0.60 s), so the model is now anchored on the live race and horizon dependent:
+- compute_anchors(laps up to t) -> anchor_s per (driver, lap t): field median of clean fc
+  laps over laps max(5, t-4)..t plus the driver's gap to the per-lap field median, current
+  stint only (>= 2 laps). Never uses laps 2-4.
+- predict_laptime(features) needs anchor_s, h, tyre now (tyre_life_t, compound_t), tyre
+  plan at t+h (tyre_life_f, compound_f, fresh_tyre_f, stints_ahead), temps at t, event,
+  driver, team, laps_remaining at t+h, race_laps. Returns absolute p10/p50/p90 for lap t+h.
+- Session 4's DP optimizer must call it with h up to a full stint (trained on h in
+  1,2,3,5,8,10,15,20,25,30).
+
+Held-out results (GroupKFold by race, train races):
+            below p10  above p90  width  MAE lgb  race offset sd
+  all          22.2%     14.3%    1.26   0.508   0.30
+  h=1          17.5      11.4     1.12   0.368   0.23
+  h=5          22.0      15.2     1.21   0.503   0.28
+  h=15         24.9      15.1     1.38   0.585   0.35
+  h=30         26.3      14.8     1.52   0.630   0.53
+- Width grows with h, as it should.
+- Below-p10 excess is the NET's location bias: net p50 sits 0.036 (h=1) to 0.104 s (h=30)
+  above the target; LightGBM's median is unbiased at every h, and net MAE is 15% worse.
+- Diagnostic only (not an output): net widths centred on the LightGBM median give
+  9.6/11.1 at h=1, 16.4/15.2 at h=5, 17.9/15.2 at h=15, 17.4/14.9 at h=30. What is left is
+  between-race variance, which grows with h: the job of fix 2 (quantiles trained on
+  out-of-race residuals).
+- Soft misses run the other way (11% below, 18% above) vs medium/hard (23% / 13-14%).
+- Final models not yet fitted (--no-final): predict_laptime needs data/models/tyre_net.pt.
 
 ## Session 2: degradation (src/degradation.py)
 - Within stint, never pooled. Median slope per (race, compound), A pooled-K / B joint:

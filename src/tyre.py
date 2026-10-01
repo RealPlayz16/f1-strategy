@@ -1,23 +1,35 @@
-"""Tyre lap time model with uncertainty: LightGBM median and a PyTorch quantile network.
+"""Tyre lap time model with uncertainty, re-anchored on the live race state.
 
-Target, per clean lap after the reference window, on race-progress corrected time:
-    y = lap_time_fc_s - race_ref_s
-race_ref_s is the median fuel-corrected clean lap of the whole field on laps REF_LAPS. Absolute
-lap time across races is not identified for a track the fold has never seen (5 of 23 train
-events appear once), so the model predicts lap time relative to the race's own level, which is
-known by the end of the reference window in live use.
+At anchor lap t the model sees only laps <= t and predicts the lap time h laps ahead:
 
-Features: tyre_life, compound, track_temp, air_temp, event, driver, team, stint, fresh_tyre,
-driver_pace_s. driver_pace_s is the driver's median fuel-corrected clean lap on laps REF_LAPS
-minus race_ref_s: causal, never computed from the laps being predicted. NaN when the driver has
-no clean lap in the window.
+    y = lap_time_fc_s(t + h) - anchor_s(t)
 
-Evaluation: GroupKFold by race over train races only; the holdout is never loaded. Laps within
-a stint are nearly identical, so random row splits would leak.
+anchor_s(t) = field_ref(t) + the driver's median gap to the per-lap field median, over the
+driver's clean laps in the window, current stint only (at least MIN_DRIVER_LAPS).
+field_ref(t) = median fuel-corrected clean lap of the field over laps max(WINDOW_START, t-W+1)
+to t. The window never includes laps 2-4: the race-start part of the early-stint effect would
+bias baselines by start compound (src/degradation.py).
 
-Interface: predict_laptime(features) -> (p10, p50, p90) in absolute seconds, from the quantile
-network, adding back race_ref_s and the race-progress term. No clamping, sorting or other
-post-processing; quantile crossings are counted and reported, not fixed.
+Why re-anchored (Session 2): a fixed reference from early laps left a per-race offset with sd
+0.60 s on unseen races, while the quantile net learned each training race's level from event
+and temperatures (in-sample per-race sd 0.043 s), so held-out intervals missed 27 / 22% at
+p10 / p90. Anchoring on recent laps removes most of the race-level offset; the remaining
+horizon-dependent uncertainty is what the quantiles have to carry.
+
+Interface change from the original brief (predict_laptime(features) -> (p10, p50, p90)):
+predictions are now horizon dependent and need the anchor. predict_laptime takes anchor_s and
+h with the tyre plan for lap t + h and returns absolute seconds:
+    anchor_s + predicted delta + K * laps_remaining(t + h) / race_laps
+compute_anchors(laps) builds anchors from laps up to t. Session 4's optimizer needs h up to a
+full stint (30).
+
+Features: h; tyre now (tyre_life_t, compound_t); tyre at t + h (tyre_life_f, compound_f,
+fresh_tyre_f, stints_ahead, so a planned stop is inside the horizon); track_temp and air_temp
+at t (future temperatures are not known live); event, driver, team.
+
+LightGBM for the median, PyTorch quantile network (pinball, seed 42) for p10 / p50 / p90.
+GroupKFold by race over train races only; the holdout is never loaded. No clamping, sorting
+or other post-processing; quantile crossings are counted and reported.
 
 Usage:
     python -m src.tyre
@@ -43,16 +55,23 @@ LAPS_PATH = Path("data/processed/laps_fuel_corrected.parquet")
 FIT_PATH = Path("data/processed/fuel_fit.json")
 MODEL_DIR = Path("data/models")
 OOF_PATH = Path("data/processed/tyre_oof.parquet")
+REPORT_PATH = Path("data/processed/tyre_report.json")
 
 SEED = 42
-REF_LAPS = (5, 10)  # starts after the race-start part of the early-stint effect (laps 2-4)
+WINDOW = 5
+WINDOW_START = 5          # skip laps 2-4 (race-start part of the early-stint effect)
+MIN_DRIVER_LAPS = 2
+MIN_FIELD_LAPS = 5
+HORIZONS = [1, 2, 3, 5, 8, 10, 15, 20, 25, 30]
+REPORT_H = [1, 5, 15, 30]
 QUANTILES = (0.1, 0.5, 0.9)
 N_FOLDS = 5
-CATS = ["compound", "event", "driver", "team"]
-NUMS = ["tyre_life", "track_temp", "air_temp", "stint", "fresh_tyre", "driver_pace_s"]
+CATS = ["compound_t", "compound_f", "event", "driver", "team"]
+NUMS = ["h", "tyre_life_t", "tyre_life_f", "fresh_tyre_f", "stints_ahead", "track_temp",
+        "air_temp"]
 FEATURES = NUMS + CATS
-EPOCHS = 60
-BATCH = 512
+EPOCHS = 30
+BATCH = 1024
 CAT_DROPOUT = 0.1
 LGB_PARAMS = {
     "objective": "quantile", "alpha": 0.5, "learning_rate": 0.05, "num_leaves": 31,
@@ -62,21 +81,66 @@ LGB_PARAMS = {
 LGB_ROUNDS = 400
 
 
+# ---------- anchors and training frame ----------
+
+def compute_anchors(laps: pd.DataFrame) -> pd.DataFrame:
+    """One row per (race, driver, lap t) with anchor_s, using only laps <= t.
+
+    laps: clean laps of one or more races with lap_time_fc_s. Anchors exist where the
+    driver has MIN_DRIVER_LAPS clean laps in the window within the current stint."""
+    c = laps[laps["lap"] >= WINDOW_START].copy()
+    keys = ["season", "round"]
+    lap_med = c.groupby(keys + ["lap"])["lap_time_fc_s"].median().rename("lap_med")
+    c = c.join(lap_med, on=keys + ["lap"])
+    c["gap_to_field"] = c["lap_time_fc_s"] - c["lap_med"]
+    rows = []
+    for (season, rnd), race in c.groupby(keys, sort=True):
+        for t in sorted(race["lap"].unique()):
+            lo = max(WINDOW_START, t - WINDOW + 1)
+            field = race[race["lap"].between(lo, t)]
+            if len(field) < MIN_FIELD_LAPS:
+                continue
+            field_ref = float(field["lap_time_fc_s"].median())
+            now = race[race["lap"] == t]
+            for _, row in now.iterrows():
+                mine = field[(field["driver"] == row["driver"]) & (field["stint"] == row["stint"])]
+                if len(mine) < MIN_DRIVER_LAPS:
+                    continue
+                rows.append(
+                    {
+                        "season": season, "round": rnd, "driver": row["driver"], "lap": t,
+                        "field_ref_s": field_ref,
+                        "anchor_s": field_ref + float(mine["gap_to_field"].median()),
+                        "tyre_life_t": row["tyre_life"], "compound_t": row["compound"],
+                        "stint_t": row["stint"], "track_temp": row["track_temp"],
+                        "air_temp": row["air_temp"],
+                    }
+                )
+    return pd.DataFrame(rows)
+
+
 def build_frame(laps: pd.DataFrame) -> pd.DataFrame:
-    """Train clean laps after the reference window, with race_ref_s, driver_pace_s and y."""
+    """(anchor, horizon) rows for train races: features at t, tyre plan and target at t + h."""
     laps = add_split(laps.drop(columns=["split"], errors="ignore"))
     c = laps[laps["is_clean"] & (laps["split"] == "train")].copy()
-    c["race"] = c["season"].astype(str) + "_" + c["round"].astype(str).str.zfill(2)
-    lo, hi = REF_LAPS
-    window = c[c["lap"].between(lo, hi)]
-    ref = window.groupby("race")["lap_time_fc_s"].median().rename("race_ref_s")
-    drv = window.groupby(["race", "driver"])["lap_time_fc_s"].median().rename("drv_ref")
-    c = c.join(ref, on="race").join(drv, on=["race", "driver"])
-    c["driver_pace_s"] = c["drv_ref"] - c["race_ref_s"]
-    c = c[c["lap"] > hi].copy()
-    c["fresh_tyre"] = c["fresh_tyre"].astype(float)
-    c["y"] = c["lap_time_fc_s"] - c["race_ref_s"]
-    return c.reset_index(drop=True)
+    if c.empty:
+        return pd.DataFrame(columns=FEATURES + ["y", "race", "h"])
+    anchors = compute_anchors(c)
+    future = c[["season", "round", "event", "driver", "team", "lap", "lap_time_fc_s",
+                "tyre_life", "compound", "fresh_tyre", "stint", "split"]].rename(
+        columns={"lap": "lap_f", "tyre_life": "tyre_life_f", "compound": "compound_f",
+                 "fresh_tyre": "fresh_tyre_f", "stint": "stint_f"}
+    )
+    frames = []
+    for h in HORIZONS:
+        a = anchors.assign(h=h, lap_f=anchors["lap"] + h)
+        frames.append(a.merge(future, on=["season", "round", "driver", "lap_f"]))
+    df = pd.concat(frames, ignore_index=True)
+    df["fresh_tyre_f"] = df["fresh_tyre_f"].astype(float)
+    df["stints_ahead"] = df["stint_f"] - df["stint_t"]
+    df["race"] = df["season"].astype(str) + "_" + df["round"].astype(str).str.zfill(2)
+    df["y"] = df["lap_time_fc_s"] - df["anchor_s"]
+    return df.reset_index(drop=True)
 
 
 # ---------- LightGBM median ----------
@@ -118,8 +182,9 @@ class QuantileNet(nn.Module):
     def __init__(self, n_num: int, vocab_sizes: list[int], n_q: int = len(QUANTILES)):
         super().__init__()
         dims = [min(16, (n + 1) // 2 + 1) for n in vocab_sizes]
-        self.emb = nn.ModuleList(nn.Embedding(n + 1, d) for n, d in zip(vocab_sizes, dims,
-                                                                         strict=True))
+        self.emb = nn.ModuleList(
+            nn.Embedding(n + 1, d) for n, d in zip(vocab_sizes, dims, strict=True)
+        )
         self.mlp = nn.Sequential(
             nn.Linear(n_num + sum(dims), 64), nn.ReLU(),
             nn.Linear(64, 64), nn.ReLU(),
@@ -167,11 +232,11 @@ def predict_net(net: QuantileNet, enc: Encoder, df: pd.DataFrame) -> np.ndarray:
         return net(num, cat).numpy()
 
 
-# ---------- cross-validation ----------
+# ---------- cross-validation and report ----------
 
 def cross_validate(df: pd.DataFrame) -> pd.DataFrame:
     cats = {c: sorted(df[c].unique()) for c in CATS}
-    oof = df[["race", "season", "event", "driver", "compound", "tyre_life", "lap", "y"]].copy()
+    oof = df[["race", "season", "event", "driver", "compound_f", "h", "lap", "y"]].copy()
     for fold, (tr, te) in enumerate(GroupKFold(n_splits=N_FOLDS).split(df, groups=df["race"])):
         train, test = df.iloc[tr], df.iloc[te]
         booster = fit_lgb(train, cats)
@@ -181,39 +246,31 @@ def cross_validate(df: pd.DataFrame) -> pd.DataFrame:
         for j, name in enumerate(["p10", "p50", "p90"]):
             oof.loc[test.index, name] = q[:, j]
         oof.loc[test.index, "fold"] = fold
-        unseen = ~test["event"].isin(train["event"].unique())
-        oof.loc[test.index, "event_unseen"] = unseen.to_numpy()
-        print(f"fold {fold}: {test['race'].nunique()} races, {len(test)} laps", flush=True)
+        print(f"fold {fold}: {test['race'].nunique()} races, {len(test)} rows", flush=True)
     return oof
 
 
-def report(oof: pd.DataFrame) -> dict:
-    below = (oof["y"] < oof["p10"]).mean()
-    above = (oof["y"] > oof["p90"]).mean()
-    crossing = ((oof["p10"] > oof["p50"]) | (oof["p50"] > oof["p90"])).mean()
-    out = {
-        "mae_lgb_p50": float((oof["y"] - oof["lgb_p50"]).abs().mean()),
-        "mae_net_p50": float((oof["y"] - oof["p50"]).abs().mean()),
-        "mae_baseline_zero": float(oof["y"].abs().mean()),
-        "frac_below_p10": float(below),
-        "frac_above_p90": float(above),
-        "quantile_crossing": float(crossing),
-        "n_laps": int(len(oof)),
+def calibration(o: pd.DataFrame) -> dict:
+    resid = o["y"] - o["p50"]
+    inner = resid - resid.groupby(o["race"]).transform("median")
+    return {
+        "n": int(len(o)),
+        "frac_below_p10": float((o["y"] < o["p10"]).mean()),
+        "frac_above_p90": float((o["y"] > o["p90"]).mean()),
+        "median_width_s": float((o["p90"] - o["p10"]).median()),
+        "mae_lgb_p50": float((o["y"] - o["lgb_p50"]).abs().mean()),
+        "mae_net_p50": float(resid.abs().mean()),
+        "race_offset_sd": float(resid.groupby(o["race"]).median().std()),
+        "below_offset_removed": float((inner < o["p10"] - o["p50"]).mean()),
+        "above_offset_removed": float((inner > o["p90"] - o["p50"]).mean()),
     }
-    # Diagnostic split: per-race offset vs what is left within a race
-    resid = oof["y"] - oof["p50"]
-    offset = resid.groupby(oof["race"]).transform("median")
-    inner = resid - offset
-    out["race_offset_sd"] = float(resid.groupby(oof["race"]).median().std())
-    out["frac_below_p10_offset_removed"] = float((inner < oof["p10"] - oof["p50"]).mean())
-    out["frac_above_p90_offset_removed"] = float((inner > oof["p90"] - oof["p50"]).mean())
-    by = oof.assign(below=oof["y"] < oof["p10"], above=oof["y"] > oof["p90"],
-                    ae_lgb=(oof["y"] - oof["lgb_p50"]).abs())
-    out["by_fold"] = by.groupby("fold")[["below", "above", "ae_lgb"]].mean().round(4).to_dict()
-    out["by_compound"] = by.groupby("compound")[["below", "above", "ae_lgb"]].mean().round(
-        4).to_dict()
-    out["by_event_unseen"] = by.groupby("event_unseen")[["below", "above", "ae_lgb"]].mean(
-    ).round(4).to_dict()
+
+
+def report(oof: pd.DataFrame) -> dict:
+    out = {"all": calibration(oof)}
+    out["crossing"] = float(((oof["p10"] > oof["p50"]) | (oof["p50"] > oof["p90"])).mean())
+    out["by_h"] = {int(h): calibration(oof[oof["h"] == h]) for h in REPORT_H}
+    out["by_fold"] = {int(f): calibration(g) for f, g in oof.groupby("fold")}
     return out
 
 
@@ -224,17 +281,16 @@ _FINAL: dict = {}
 
 def load_final() -> dict:
     if not _FINAL:
-        state = torch.load(MODEL_DIR / "tyre_net.pt", weights_only=False)
-        _FINAL.update(state)
+        _FINAL.update(torch.load(MODEL_DIR / "tyre_net.pt", weights_only=False))
     return _FINAL
 
 
 def predict_laptime(features: pd.DataFrame) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """features: FEATURES plus race_ref_s, laps_remaining, race_laps. Returns absolute lap time
-    p10, p50, p90 in seconds: race_ref_s + predicted delta + K * laps_remaining / race_laps."""
+    """features: FEATURES plus anchor_s (from compute_anchors at lap t), laps_remaining at
+    t + h and race_laps. Returns absolute lap time p10, p50, p90 in seconds for lap t + h."""
     state = load_final()
     q = predict_net(state["net"], state["encoder"], features)
-    base = features["race_ref_s"].to_numpy() + state["K_s"] * (
+    base = features["anchor_s"].to_numpy() + state["K_s"] * (
         features["laps_remaining"].to_numpy() / features["race_laps"].to_numpy()
     )
     return base + q[:, 0], base + q[:, 1], base + q[:, 2]
@@ -246,15 +302,18 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     np.random.seed(SEED)
 
-    laps = pd.read_parquet(LAPS_PATH)
-    df = build_frame(laps)
-    print(f"train races: {df['race'].nunique()}  laps after window: {len(df)}  "
+    df = build_frame(pd.read_parquet(LAPS_PATH))
+    print(f"train races: {df['race'].nunique()}  rows: {len(df)}  "
           f"holdout rows: {int((df['split'] != 'train').sum())}")
 
     oof = cross_validate(df)
     oof.to_parquet(OOF_PATH, index=False)
     res = report(oof)
-    print(json.dumps(res, indent=2))
+    REPORT_PATH.write_text(json.dumps(res, indent=2), encoding="utf-8")
+    pd.set_option("display.width", 200)
+    table = pd.DataFrame({"all": res["all"], **{f"h={h}": v for h, v in res["by_h"].items()}})
+    print(table.round(3).to_string())
+    print(f"quantile crossing: {res['crossing']:.4f}")
 
     if not args.no_final:
         MODEL_DIR.mkdir(parents=True, exist_ok=True)
