@@ -197,6 +197,11 @@ def plan_rows(base: dict, laps: range, stops: dict[int, str], compound_now: str,
               age_now: float, anchor_lap: int) -> list[dict]:
     """Feature rows for every lap of a plan. stops: in-lap -> compound fitted."""
     rows, comp, age, n_stops = [], compound_now, age_now, 0
+    # A stop at or before the first scored lap (pit-now stops at pit_lap; laps start at
+    # pit_lap + 1) is applied before scoring. Missing this scored pit-now plans on the old
+    # tyres to the flag (Session 5 bug, found from a 100% never-pit break-even table).
+    for lap in sorted(s for s in stops if s < laps.start):
+        comp, age, n_stops = stops[lap], 0.0, n_stops + 1
     for lap in laps:
         age += 1
         rows.append({**base, "h": lap - anchor_lap, "tyre_life_f": age, "compound_f": comp,

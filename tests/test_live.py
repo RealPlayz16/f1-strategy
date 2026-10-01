@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import pandas.testing as pdt
 
-from src.live import ReplayDriver, quantile_sum
+from src.live import ReplayDriver, plan_rows, quantile_sum
 
 
 def _race():
@@ -52,6 +52,15 @@ def test_state_at_lap_uses_leader_lap_end():
     assert s.t == 400.0
     assert set(s.laps["lap"]) <= {1, 2, 3, 4}
     assert ((s.laps["lap"] == 4) & (s.laps["driver"] == "HAM")).sum() == 0  # HAM ends at 401.5
+
+
+def test_pit_now_stop_is_applied_before_the_first_scored_lap():
+    rows = plan_rows({}, range(8, 11), {7: "HARD", 9: "SOFT"}, "MEDIUM", 6.0, anchor_lap=6)
+    assert [r["compound_f"] for r in rows] == ["HARD", "HARD", "SOFT"]
+    assert [r["tyre_life_f"] for r in rows] == [1.0, 2.0, 1.0]
+    assert [r["stints_ahead"] for r in rows] == [1, 1, 2]
+    stay = plan_rows({}, range(8, 11), {}, "MEDIUM", 6.0, anchor_lap=6)
+    assert [r["tyre_life_f"] for r in stay] == [7.0, 8.0, 9.0]
 
 
 def test_quantile_sum_comonotonic():
