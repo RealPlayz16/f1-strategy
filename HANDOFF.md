@@ -1,5 +1,5 @@
 # HANDOFF: F1 Race Strategy Optimizer (Insane Version)
-Sessions 1-2 of 6 done | Started 1:40pm ET Sep 30 | Deadline Oct 1 11:59pm ET
+Sessions 1-3 of 6 done | Started 1:40pm ET Sep 30 | Deadline Oct 1 11:59pm ET
 Environment: Windows 11, PowerShell, venv at .venv, Python 3.11
 
 ## Project summary
@@ -12,7 +12,7 @@ triggers. Delivered with a pit-wall dashboard and an Arduino "BOX" pit board.
 ## Session roadmap
 1. Data foundation (DONE)
 2. Tire degradation model with uncertainty (LightGBM + PyTorch quantile) (DONE)
-3. Overtaking model + race rules
+3. Overtaking model + race rules (DONE)
 4. 20-car race engine + DP optimizer + Monte Carlo
 5. Live replay strategy engine + Fast Flag hook + backtest
 6. Pit-wall dashboard + Arduino pit board + README/demo
@@ -363,3 +363,88 @@ Carry forward to Session 4:
 - Soft p50 bias +0.075 s (see the tyre model section).
 - Interval width flattening between h=15 and h=30.
 - predict_laptime is horizon dependent and needs anchors (interface change above).
+
+## Session 3 results (done)
+Identification, worked before fitting:
+1. Dirty-air censoring of pace delta: large. Within 0.5 s, observed recent-lap delta 0.22 s
+   vs free-air delta 0.62 s (r 0.50). The pass model uses free-air pace delta (what the
+   engine knows). Free-air pace exists for 52% of train battles (70% of passes); the rest
+   are stints with no clear-air lap, skewed to stuck pairs, and get a missing flag.
+2. Free-air pace delta vs tyre age delta r 0.56: prediction fine, coefficients not
+   separately interpretable.
+3. Track difficulty: pass rate within 1 s 8% (Silverstone, Zandvoort) to 24% (Abu Dhabi,
+   Spain), 1-3 races per track: L2-shrunk event terms.
+4. Selection in long battles: pass rate 20% (battle laps 1-2) -> 5% (lap 6+). Modelled
+   with log laps_in_battle; the engine applies the average decay to every pair.
+5. Pass and re-pass within one lap: not identifiable; lap-end order is what scores.
+
+src/traffic.py: free-air pace per (driver, stint) from laps with > 3 s clear air (leaders
+count as clear air), age-adjusted with the joint per-race deg slope.
+- Dirty air, lap time minus own free-air pace, by gap at end of previous lap:
+    gap        aero-only (not faster)   held up (faster)   pooled
+    0-0.5         +0.35 (0.24-0.66)        +0.96            +0.80
+    0.5-1         -0.11                    +0.62            +0.33
+    1-1.5         -0.07                    +0.41            +0.21
+    1.5-2         -0.12                    +0.33            +0.14
+    2-3           -0.09                    +0.17            +0.04
+- NOT SEPARABLE CLEANLY: at 2-3 s both effects should be about 0, but the split by
+  estimated free-air delta leaves -0.085 / +0.167 s of selection bias, as big as the effect.
+- PARAMETERISED for the engine: dirty_air_penalty(gap, d0): d0 up to 0.5 s, linear to 0 at
+  1.0 s. d0 = 0.35 s, Monte Carlo sweep 0.24 to 0.66. Being held up comes from the engine
+  (a car that cannot pass cannot lap faster than the car ahead), never from this curve.
+- The pooled curve is the validation target for Session 4 (see brief).
+
+src/overtake_model.py: logistic P(pass on lap | state at end of previous lap).
+- Held-out (GroupKFold by race): AUC 0.926 (gap only 0.836), Brier 0.045 (0.057).
+- Calibration, predicted vs observed:
+    [0,0.02) 0.006/0.005  [0.02,0.05) 0.033/0.024  [0.05,0.1) 0.071/0.059
+    [0.1,0.2) 0.144/0.125  [0.2,0.3) 0.246/0.240  [0.3,0.5) 0.392/0.363
+    [0.5,1] 0.748/0.641 (n 504, about 45% of all passes)
+- Base rates reproduced without being given: within 0.5 s 34.9% predicted / 31.8% observed,
+  0.5-1 7.1 / 5.9, 1-1.5 1.5 / 1.1, 1.5-2 1.0 / 0.6.
+- MISS, reported not fixed: 15% too many passes overall (828 vs 720). Tracks seen in
+  training are calibrated (7.37% vs 7.27%); unseen tracks over-predict (15.2% vs 8.9%);
+  the top bucket over-predicts by 11 points. Holdout: only Singapore is an unseen track.
+- Model: data/models/pass_model.json (coefficients, standardisation, events, gap edges).
+
+src/rules.py: compound rule, no overtaking under SC / VSC / red, DRS availability, pit loss
+by condition (free under red), stint caps SOFT 28 / MEDIUM 46 / HARD 53 (longest pit-ended
+train stints; a floor), optional race tyre limit. Article numbers unverified.
+
+## Session 4 brief: race engine, DP optimizer, Monte Carlo
+The biggest build left. Inputs all exist; this session is simulation, not modelling.
+
+Engine (src/engine.py), one lap at a time, 20 cars:
+- Free-air lap time per car: tyre model predict_laptime (anchored, horizon dependent;
+  sample between p10 and p90, do not use p50 alone for uncertainty) plus K * progress.
+- Traffic: car within 1 s of the car ahead adds dirty_air_penalty(gap, d0). A car that does
+  not pass cannot finish the lap ahead of the car in front (held up). Passes drawn from the
+  pass model, using free-air pace delta, gap, DRS (rules.drs_enabled), tyre and compound
+  deltas, track, laps in battle.
+- Pit stops: pit loss from pitloss_by_track (season, event) via rules.pit_loss_s.
+- SC / VSC: deployments from sc_rates (lap-1 SC apart via p_sc_lap1), durations from
+  sc_events train medians or their empirical distribution; no passing; field compresses.
+- Rules: every plan checked with rules.strategy_violations.
+
+Optimizer: DP over (lap, compound, tyre age, stops made) for one car, rivals on fixed or
+sampled strategies; Monte Carlo over SC timing, rival strategies and lap time noise.
+
+Validation, before any strategy claim:
+- Engine vs history on train races: replay real strategies and compare finishing order and
+  gaps.
+- Traffic: simulate following pairs and check the engine reproduces the pooled dirty-air
+  curve (0.80 / 0.33 / 0.21 / 0.14 / 0.04 s by gap bin). Separately, passes per race.
+- PHI: pit loss under SC uses phi = 0.08, swept 0.05 to 0.12 in the Monte Carlo. Validate it
+  against observed position loss when stopping under SC on train races, not lap-time
+  seconds (see "Session 4 task" above).
+
+Carries, each a required check:
+- Soft p50 + 0.075 s sensitivity: soft p50 is too fast by about 0.075 s at every horizon.
+  Re-run soft-strategy recommendations with soft p50 + 0.075 and report whether they flip.
+- h = 30 tyre intervals are a floor, not an estimate: survivorship (only laps still clean
+  30 laps later are in that bucket). Do not read long-horizon width as the true uncertainty.
+- Pass model over-predicts on unseen tracks (15.2% vs 8.9%) and in its top bucket (0.75 vs
+  0.64): sensitivity run with pass probabilities scaled down, and report Singapore (the
+  holdout's unseen track) separately.
+- Dirty air d0 sweep 0.24 to 0.66 in the Monte Carlo.
+- Holdout races touch nothing until Session 5's backtest.
