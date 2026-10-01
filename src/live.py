@@ -284,7 +284,9 @@ def decide(state: RaceState, driver: str, laps_all_cols: pd.DataFrame, kind: str
             meta.append((family, k, stops))
     rows = pd.concat(frames, ignore_index=True)
     rows["laps_remaining"] = race_laps - rows["lap"]
-    rows = rows[~rows["lap"].isin(neutral_laps)].reset_index(drop=True)
+    # Laps under the neutralisation run at the same pace on both plans, but only if the call
+    # is real. The real-call branch drops them; the false-call branch scores every lap.
+    rows["neutral"] = rows["lap"].isin(neutral_laps)
     p10, p50, p90 = predict_laptime(rows)
     soft = (rows["compound_f"] == "SOFT").to_numpy() * soft_bias
     rows["q10"], rows["q50"], rows["q90"] = p10 + soft, p50 + soft, p90 + soft
@@ -294,7 +296,9 @@ def decide(state: RaceState, driver: str, laps_all_cols: pd.DataFrame, kind: str
         later = sum(1 for lap in stops if lap != pit_lap)
         total = g["q50"].sum() + later * pitloss["green"]
         if family not in scored or total < scored[family]["p50"]:
-            scored[family] = {"stops": stops, "q": g[["q10", "q50", "q90"]].to_numpy(),
+            real = ~g["neutral"].to_numpy()
+            scored[family] = {"stops": stops, "q_all": g[["q10", "q50", "q90"]].to_numpy(),
+                              "q": g.loc[real, ["q10", "q50", "q90"]].to_numpy(),
                               "p50": total, "h": g["h"].to_numpy(), "later_stops": later}
     # Selecting the best of many plans on p50 favours plans whose p50 is optimistic
     # (winner's curse); the governing risk in HANDOFF applies here in small form.
@@ -309,8 +313,10 @@ def decide(state: RaceState, driver: str, laps_all_cols: pd.DataFrame, kind: str
         u = norm.cdf(z)
         t_pn_lap = quantile_sum(pn["q"], u[:, 0]) + pn["later_stops"] * green
         t_so = quantile_sum(so["q"], u[:, 1]) + so["later_stops"] * green
+        t_pn_all = quantile_sum(pn["q_all"], u[:, 0]) + pn["later_stops"] * green
+        t_so_all = quantile_sum(so["q_all"], u[:, 1]) + so["later_stops"] * green
         gain_real = t_so - (t_pn_lap + cond_loss)   # + = pitting better, neutralisation real
-        gain_false = t_so - (t_pn_lap + green)      # call false: the stop is under green
+        gain_false = t_so_all - (t_pn_all + green)  # call false: every lap green, green stop
         results[rho] = {
             "p_pit_better_if_real": float((gain_real > 0).mean()),
             "p_pit_better_if_false": float((gain_false > 0).mean()),
@@ -326,11 +332,13 @@ def decide(state: RaceState, driver: str, laps_all_cols: pd.DataFrame, kind: str
     u = norm.cdf(z)
     t_pn_lap = quantile_sum(pn["q"], u[:, 0]) + pn["later_stops"] * green
     t_so = quantile_sum(so["q"], u[:, 1]) + so["later_stops"] * green
+    t_pn_all = quantile_sum(pn["q_all"], u[:, 0]) + pn["later_stops"] * green
+    t_so_all = quantile_sum(so["q_all"], u[:, 1]) + so["later_stops"] * green
+    g_false = float(np.median(t_so_all - (t_pn_all + green)))
     break_even = {}
     for phi in (PHI_RANGE[0], PHI, PHI_RANGE[1]):
         g_real = float(np.median(t_so - (t_pn_lap + green - phi
                                            * pitloss[f"delta_lap_{kind.lower()}"])))
-        g_false = float(np.median(t_so - (t_pn_lap + green)))
         if g_false >= 0:
             p_star = 0.0             # pitting wins even if the call is false
         elif g_real <= 0:
