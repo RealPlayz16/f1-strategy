@@ -1,5 +1,5 @@
 # HANDOFF: F1 Race Strategy Optimizer (Insane Version)
-Session 1 of 6 | Started 1:40pm ET Sep 30 | Deadline Oct 1 11:59pm ET
+Session 1 of 6 done | Started 1:40pm ET Sep 30 | Deadline Oct 1 11:59pm ET
 Environment: Windows 11, PowerShell, venv at .venv, Python 3.11
 
 ## Project summary
@@ -10,7 +10,7 @@ re-optimizes live during a replayed race, using Fast Flag's Safety Car calls as
 triggers. Delivered with a pit-wall dashboard and an Arduino "BOX" pit board.
 
 ## Session roadmap
-1. Data foundation (IN PROGRESS)
+1. Data foundation (DONE)
 2. Tire degradation model with uncertainty (LightGBM + PyTorch quantile)
 3. Overtaking model + race rules
 4. 20-car race engine + DP optimizer + Monte Carlo
@@ -70,8 +70,9 @@ triggers. Delivered with a pit-wall dashboard and an Arduino "BOX" pit board.
   0.04 to 0.05 s per lap on every compound after a 0.05 s/lap fuel adjustment. Soft laps
   at tyre age 2 to 4 sit above the soft trend, likely race laps 2 to 4 in DRS trains:
   check in Session 2.
-### Not started
-- README.md (credit Naman for Fast Flag)
+- README.md (credits Naman for Fast Flag)
+
+Session 1 complete. Next: Session 2.
 
 ## Session 4 task: validate PHI against position loss
 PHI = 0.08 is a stated assumption, not a measurement. In Session 4, validate it against
