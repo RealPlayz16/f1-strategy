@@ -266,11 +266,17 @@ battles.parquet (all races, split column)
 - Paired within race: SOFT minus MEDIUM +0.017 (A) / +0.012 (B), 82% / 73% of 11 races.
   HARD minus MEDIUM 0.000, 50% of 20 races: no deg difference between hard and medium.
 - Curves beyond about 25 laps drop or flatten: survivorship (only low-deg long stints).
-- Early bump (ages 2-4 above the within-stint trend on 5-15) is NOT soft-specific and NOT
-  explained by gap_ahead_s. Race-start stints: SOFT 0.26, MEDIUM 0.58, HARD 0.70 s; with
-  gap controls 0.32 / 0.59 / 0.71. Later stints: 0.07 to 0.25. Reading: a fresh-tyre
-  warm-up effect in every stint plus a larger race-start effect (non-linear early track
-  evolution, trains beyond 1 s, DRS off on lap 2 are candidates; lap data cannot separate).
+- Early-stint effect (renamed; "early-soft anomaly" was wrong): ages 2-4 sit above the
+  within-stint trend on 5-15 in EVERY compound, ordered soft < medium < hard, and
+  gap_ahead_s does not explain it. Race-start stints: SOFT 0.26, MEDIUM 0.58, HARD 0.70 s
+  (with gap controls 0.32 / 0.59 / 0.71). Stints starting mid-race: 0.07 to 0.25 s.
+  Two parts, both inversely related to grip: fresh-tyre warm-up in every stint (harder
+  compounds warm slower; present mid-race on a rubbered track) and a larger race-start
+  part (green track / non-linear early track evolution plausible). Not separable from lap
+  data. Consequence: any anchor or reference window must skip laps 2-4.
+- Anchor window moved from laps 2-10 to 5-10: misses 27.5/21.9 -> 26.9/21.5, offset
+  removed 21.6/16.8 -> 20.9/16.9, race offset sd 0.66 -> 0.60, MAE 0.646 -> 0.625.
+  The start-compound bias was real but small.
 
 ## Next session (2) preview
 Tire model: per-race baseline fit, cross-race LightGBM, PyTorch quantile model

@@ -11,10 +11,15 @@ Degradation slope per (race, compound), two estimates:
 Curves: tyre_life bins as dummies within stint, relative to REF_BIN, per (race, compound);
 then the median across races.
 
-Early-soft check (Session 1 flagged soft laps at tyre age 2 to 4 above trend): within-stint
-linear trend fitted on ages 5 to 15, mean residual at ages 2 to 4. A linear progress
-correction cannot change curvature inside a stint, so the questions are whether the bump is
-in stints that start the race or in all stints, and whether gap_ahead_s explains it.
+Early-stint effect (first flagged in Session 1 as an "early-soft anomaly", a misnomer):
+within-stint linear trend fitted on ages 5 to 15, mean residual at ages 2 to 4. A linear
+progress correction cannot change curvature inside a stint, so the questions are whether the
+bump is in stints that start the race or in all stints, and whether gap_ahead_s explains it.
+Session 2 result: present in every compound, ordered soft < medium < hard, not explained by
+gap_ahead_s. Race-start stints 0.26 / 0.58 / 0.70 s, later stints 0.07 to 0.25 s. Two parts,
+both scaling inversely with grip: a fresh-tyre warm-up part in every stint (harder compounds
+warm slower) and a larger race-start part (green track and non-linear early track evolution
+are plausible). Lap timing cannot separate the candidates. Anchor windows must skip laps 2-4.
 
 Usage:
     python -m src.degradation

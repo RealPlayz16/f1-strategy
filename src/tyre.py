@@ -45,7 +45,7 @@ MODEL_DIR = Path("data/models")
 OOF_PATH = Path("data/processed/tyre_oof.parquet")
 
 SEED = 42
-REF_LAPS = (2, 10)
+REF_LAPS = (5, 10)  # starts after the race-start part of the early-stint effect (laps 2-4)
 QUANTILES = (0.1, 0.5, 0.9)
 N_FOLDS = 5
 CATS = ["compound", "event", "driver", "team"]
@@ -200,6 +200,13 @@ def report(oof: pd.DataFrame) -> dict:
         "quantile_crossing": float(crossing),
         "n_laps": int(len(oof)),
     }
+    # Diagnostic split: per-race offset vs what is left within a race
+    resid = oof["y"] - oof["p50"]
+    offset = resid.groupby(oof["race"]).transform("median")
+    inner = resid - offset
+    out["race_offset_sd"] = float(resid.groupby(oof["race"]).median().std())
+    out["frac_below_p10_offset_removed"] = float((inner < oof["p10"] - oof["p50"]).mean())
+    out["frac_above_p90_offset_removed"] = float((inner > oof["p90"] - oof["p50"]).mean())
     by = oof.assign(below=oof["y"] < oof["p10"], above=oof["y"] > oof["p90"],
                     ae_lgb=(oof["y"] - oof["lgb_p50"]).abs())
     out["by_fold"] = by.groupby("fold")[["below", "above", "ae_lgb"]].mean().round(4).to_dict()
