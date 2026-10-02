@@ -21,6 +21,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from src.backtest import MATCH_WINDOW_S
 from src.live import ACCOUNTS_FOR, LAPS_PATH, NOT_ACCOUNTED, SC_PATH, load_recs, race_id
 
 DECISIONS_PATH = Path("data/processed/backtest_decisions.parquet")
@@ -105,7 +106,16 @@ def export(rid: str, laps: pd.DataFrame, sc: pd.DataFrame, dec: pd.DataFrame,
         t = float(rec["t"])
         kind = str(rec["flag"])
         g = d[(d["source"] == "call") & (d["kind_called"] == kind)]
+        # Whether a neutralisation followed is future knowledge at the moment of the call.
+        # It is revealed only once the replay passes the matching window (MATCH_WINDOW_S),
+        # so the page teaches the false-call result without leaking it into the decision.
+        after = neutral[(neutral["t_deploy_s"] >= t)
+                        & (neutral["t_deploy_s"] <= t + MATCH_WINDOW_S)]
+        followed = str(after["kind"].iloc[0]) if len(after) else None
+        known_t = float(after["t_deploy_s"].iloc[0]) if len(after) else t + MATCH_WINDOW_S
         events.append({
+            "followed_by": followed,
+            "outcome_lap": lap_in_progress(lap_ends, known_t),
             "kind": "call", "t": t, "lap": lap_in_progress(lap_ends, t), "flag": kind,
             "label": f"Fast Flag calls {rec['message']}",
             "reason": str(rec["reason"]), "confidence": float(rec["confidence"]),

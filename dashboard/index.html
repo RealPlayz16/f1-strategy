@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pit wall: live Safety Car decisions</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+  <h1>Pit wall <span class="sub">live Safety Car decisions under uncertainty</span></h1>
+  <div class="controls">
+    <select id="race"></select>
+    <button id="prev" title="previous lap">&#8592;</button>
+    <input type="range" id="lap" min="1" value="1">
+    <button id="next" title="next lap">&#8594;</button>
+    <span id="lapLabel" class="lap-label">lap 1</span>
+    <button id="jump" class="jump">jump to the call</button>
+  </div>
+  <p class="scope" id="scope"></p>
+</header>
+
+<main>
+  <section class="panel order">
+    <h2>Running order <span id="orderNote" class="note"></span></h2>
+    <table id="orderTable"><tbody></tbody></table>
+  </section>
+
+  <section class="panel feed">
+    <h2>Race control feed</h2>
+    <p class="note">Nothing after the current lap is shown: the replay driver serves the
+      race as of this moment only.</p>
+    <div id="events"></div>
+  </section>
+</main>
+
+<footer>
+  <div class="cols">
+    <div><h3>Every decision accounts for</h3><ul id="accounts"></ul></div>
+    <div><h3>And does not account for</h3><ul id="notAccounts"></ul></div>
+  </div>
+  <p class="note">One real neutralisation in the holdout (2025 United States, VSC lap 7):
+    the decision path has n = 1. A working live decision system demonstrated end to end,
+    not a validated strategy system.</p>
+</footer>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

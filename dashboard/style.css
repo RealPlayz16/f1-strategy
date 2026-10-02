@@ -1,0 +1,80 @@
+:root {
+  --bg: #12131a;
+  --panel: #1b1d27;
+  --line: #2c2f3d;
+  --text: #e8e9ef;
+  --muted: #9aa0b4;
+  --accent: #6ea8ff;
+  --warn: #e0b341;
+  --neutral: #8b90a3;
+  --sc: #e0b341;
+  --vsc: #63c2a8;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--text);
+  font: 14px/1.5 "Segoe UI", system-ui, sans-serif;
+}
+header { padding: 16px 20px 10px; border-bottom: 1px solid var(--line); }
+h1 { font-size: 18px; margin: 0 0 10px; }
+h1 .sub { color: var(--muted); font-weight: 400; font-size: 14px; margin-left: 8px; }
+h2 { font-size: 14px; margin: 0 0 10px; text-transform: uppercase; letter-spacing: .06em;
+     color: var(--muted); }
+h3 { font-size: 12px; margin: 0 0 6px; text-transform: uppercase; letter-spacing: .06em;
+     color: var(--muted); }
+.controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+select, button {
+  background: var(--panel); color: var(--text); border: 1px solid var(--line);
+  border-radius: 6px; padding: 6px 10px; font: inherit; cursor: pointer;
+}
+button:hover { border-color: var(--accent); }
+input[type=range] { flex: 1; min-width: 220px; accent-color: var(--accent); }
+.lap-label { font-variant-numeric: tabular-nums; color: var(--muted); min-width: 110px; }
+.jump { border-color: var(--accent); color: var(--accent); }
+.scope { color: var(--muted); margin: 10px 0 0; font-size: 13px; }
+main { display: grid; grid-template-columns: 340px 1fr; gap: 16px; padding: 16px 20px; }
+@media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+         padding: 14px 16px; }
+.note { color: var(--muted); font-size: 12px; margin: 0 0 10px; }
+table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+td { padding: 3px 4px; border-bottom: 1px solid var(--line); }
+td.pos { color: var(--muted); width: 26px; }
+td.drv { font-weight: 600; width: 50px; }
+td.gap { text-align: right; color: var(--muted); width: 64px; }
+.tyre { font-size: 11px; padding: 1px 6px; border-radius: 10px; border: 1px solid var(--line); }
+.SOFT { color: #ff7a7a; border-color: #5a2b2b; }
+.MEDIUM { color: #f2d06b; border-color: #5a4c2b; }
+.HARD { color: #dfe3ee; border-color: #434858; }
+.pitting { color: var(--accent); font-size: 11px; margin-left: 6px; }
+.event { border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px;
+         margin-bottom: 12px; }
+.event.call { border-left: 3px solid var(--sc); }
+.event.deploy { border-left: 3px solid var(--vsc); }
+.event h4 { margin: 0 0 4px; font-size: 15px; }
+.event .meta { color: var(--muted); font-size: 12px; margin-bottom: 10px; }
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+         gap: 10px; }
+.card { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px;
+        background: #171922; }
+.card .drv { font-weight: 700; font-size: 15px; }
+.card .verdict { font-size: 12px; margin: 4px 0 8px; }
+.verdict.overlap { color: var(--neutral); }
+.verdict.blind { color: var(--warn); }
+.verdict.pit, .verdict.stay { color: var(--text); font-weight: 600; }
+.prange { font-variant-numeric: tabular-nums; font-size: 13px; }
+.prange b { font-size: 16px; }
+.bar { position: relative; height: 8px; background: #22252f; border-radius: 4px;
+       margin: 7px 0 4px; }
+.bar .span { position: absolute; top: 0; height: 100%; background: var(--neutral);
+             border-radius: 4px; opacity: .85; }
+.bar .mid { position: absolute; top: -3px; width: 2px; height: 14px; background: var(--text); }
+.bar .half { position: absolute; top: -2px; left: 50%; width: 1px; height: 12px;
+             background: #4b5064; }
+.kv { color: var(--muted); font-size: 12px; margin-top: 6px; }
+.kv span { color: var(--text); }
+footer { border-top: 1px solid var(--line); padding: 14px 20px 26px; color: var(--muted); }
+.cols { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 10px; }
+@media (max-width: 900px) { .cols { grid-template-columns: 1fr; } }
+footer ul { margin: 0; padding-left: 18px; font-size: 12px; }
+footer li { margin-bottom: 3px; }
