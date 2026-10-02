@@ -146,6 +146,33 @@ model cannot separate the two plans", and the system reports that rather than pi
 (2025 Japanese, United States, Singapore, Abu Dhabi). Holdout races touch no fit. 2025 Dutch
 was moved out of the holdout because Fast Flag trained on it.
 
+## See it work (three commands)
+
+```bash
+pip install -r requirements.txt
+python -m src.dashboard
+# open http://127.0.0.1:8000
+```
+
+No data rebuild and no FastF1 download: the two demo races ship as committed snapshots in
+`data/demo/`, written by `python -m src.dashboard_data` from the backtest outputs. Run from
+the repository root.
+
+What to look at:
+
+1. **2025 United States**, press *jump to the call*. Fast Flag calls a Safety Car on lap 6,
+   61 s before race control. Every one of the 20 cars reads **"no decision: model has no
+   anchor yet (laps 2-4 skipped)"**. That is the blind window above, on screen.
+2. Step one lap on. Race control deploys the VSC, the system can now decide, and every car
+   comes back **"overlapping: the model cannot separate the two plans"**, with P(pit better)
+   shown as a range across the three correlation assumptions rather than a single number.
+3. **2025 Singapore**, *jump to the call*, then step forward two laps: the Safety Car call
+   turns out to be false, and the page says so only once the replay reaches the point where
+   that would be known.
+
+The page never renders anything after the current lap, and every decision on it was
+computed by `src.live.decide` from the race state as of that moment.
+
 ## Rebuild the pipeline from scratch
 
 ```bash
@@ -187,6 +214,7 @@ timelines for the holdout races, built in a Fast Flag clone at `~/fast-flag` wit
 | `src/engine.py` | 20-car engine (failed validation, documented) |
 | `src/live.py` | Fast Flag hook, leak-tested replay driver, pit-now vs stay-out decision |
 | `src/backtest.py`, `src/live_report.py` | Holdout backtest, break-even precision, results report |
+| `src/dashboard.py`, `src/dashboard_data.py`, `dashboard/` | Pit-wall replay page and its committed demo snapshots |
 
 Design history, every model decision and every failed check: [HANDOFF.md](HANDOFF.md).
 
