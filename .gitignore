@@ -8,3 +8,4 @@ data/processed/
 figures/
 data/models/
 .claude/
+*.log
