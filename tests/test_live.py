@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import pandas.testing as pdt
 
-from src.live import ReplayDriver, plan_rows, quantile_sum
+from src.live import RaceState, ReplayDriver, decide, plan_rows, quantile_sum
 
 
 def _race():
@@ -61,6 +61,18 @@ def test_pit_now_stop_is_applied_before_the_first_scored_lap():
     assert [r["stints_ahead"] for r in rows] == [1, 1, 2]
     stay = plan_rows({}, range(8, 11), {}, "MEDIUM", 6.0, anchor_lap=6)
     assert [r["tyre_life_f"] for r in stay] == [7.0, 8.0, 9.0]
+
+
+def test_undecided_rows_still_carry_the_sensitivity_field():
+    """An early return is still a row of that soft-bias run; without the field the
+    undecided cars disappear from any filter on it (dashboard export bug)."""
+    state = RaceState(t=100.0, laps=pd.DataFrame(columns=["driver", "lap"]),
+                      recs=pd.DataFrame(), neutral=pd.DataFrame())
+    pitloss = {"green": 22.0, "sc": 18.0, "vsc": 19.0, "delta_lap_sc": 40.0,
+               "delta_lap_vsc": 30.0, "source": "test"}
+    dec = decide(state, "VER", pd.DataFrame(), "SC", {"p": 0.5}, pitloss, 56, soft_bias=0.075)
+    assert dec["decision"] == "no data"
+    assert dec["soft_bias_s"] == 0.075
 
 
 def test_quantile_sum_comonotonic():

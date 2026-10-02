@@ -1,0 +1,34 @@
+{
+ "races": [
+  {
+   "race": "2025_United_States",
+   "event": "United States Grand Prix",
+   "season": 2025,
+   "race_laps": 56,
+   "events": 2
+  },
+  {
+   "race": "2025_Singapore",
+   "event": "Singapore Grand Prix",
+   "season": 2025,
+   "race_laps": 62,
+   "events": 1
+  }
+ ],
+ "p_calls": {
+  "SC": {
+   "p": 0.44,
+   "q05": 0.28235552657287616,
+   "q95": 0.6032149318281421,
+   "hits": 10,
+   "n": 23
+  },
+  "VSC": {
+   "p": 0.5652173913043478,
+   "q05": 0.3951557849192739,
+   "q95": 0.7286868096901826,
+   "hits": 12,
+   "n": 21
+  }
+ }
+}

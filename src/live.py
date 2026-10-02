@@ -243,8 +243,12 @@ def decide(state: RaceState, driver: str, laps_all_cols: pd.DataFrame, kind: str
     """Pit-now vs stay-out for one car at state.t. Returns a self-describing result."""
     rng = rng or np.random.default_rng(SEED)
     mine = state.laps[state.laps["driver"] == driver].sort_values("lap")
-    out = {"driver": driver, "t": state.t, "kind": kind, "accounts_for": ACCOUNTS_FOR,
-           "does_not_account_for": NOT_ACCOUNTED, "pit_loss_source": pitloss["source"]}
+    # soft_bias_s belongs on every return path, including the early ones: a row that records
+    # "no decision" is still a row of that sensitivity run, and dropping the field makes the
+    # undecided cars vanish from any filter on it.
+    out = {"driver": driver, "t": state.t, "kind": kind, "soft_bias_s": soft_bias,
+           "accounts_for": ACCOUNTS_FOR, "does_not_account_for": NOT_ACCOUNTED,
+           "pit_loss_source": pitloss["source"]}
     if mine.empty:
         return {**out, "decision": "no data"}
     last = mine.iloc[-1]

@@ -51,8 +51,8 @@ Split at phi 0.08, SC calls: cars whose stay-out plan still needs a stop (n=238)
 
 - Fast Flag called **SC** at t = 3998.5 s ("car 12 stopped for 3.0 s after an impact"); race control deployed a **VSC** at 4059.7 s. Lead 61.2 s = 0.61 laps. Right event, wrong kind.
 - Clock check: Fast Flag's official VSC vs our sc_events differ by -0.28 s.
-- Decisions at the call: {}. The call came at the end of lap 5; the tyre model anchors on at least 2 clean laps from lap 5 on (laps 2-4 are skipped, early-stint effect), so **the system was blind when the call arrived**. The lead time bought nothing on the one real event.
-- Decisions at the deployment (no-call path, P = 1): {'overlapping: the model cannot separate the two plans': 15}.
+- Decisions at the call: {'no anchor (fewer than 2 clean laps in current stint)': 20}. The call came at the end of lap 5; the tyre model anchors on at least 2 clean laps from lap 5 on (laps 2-4 are skipped, early-stint effect), so **the system was blind when the call arrived**. The lead time bought nothing on the one real event.
+- Decisions at the deployment (no-call path, P = 1): {'overlapping: the model cannot separate the two plans': 15, 'no anchor (fewer than 2 clean laps in current stint)': 5}.
 
 | driver | compound_now | p_pit_better_rho0.0 | p_pit_better_rho0.5 | p_pit_better_rho0.9 | gain_if_real_p50_rho0.5 | share_laps_h_gt_30 | pit_now_plan | stay_out_plan |
 |---|---|---|---|---|---|---|---|---|
