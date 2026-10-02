@@ -1,6 +1,6 @@
 # HANDOFF: F1 Race Strategy Optimizer (Insane Version)
-Sessions 1-5 of 6 done (Session 4 engine with a documented limitation) | Started 1:40pm ET
-Sep 30 | Deadline Oct 1 11:59pm ET
+All 6 sessions done (Session 4 engine with a documented limitation; no optimizer) | Started
+1:40pm ET Sep 30 | Deadline Oct 1 11:59pm ET
 Environment: Windows 11, PowerShell, venv at .venv, Python 3.11
 
 ## Project summary
@@ -17,7 +17,7 @@ triggers. Delivered with a pit-wall dashboard and an Arduino "BOX" pit board.
 4. 20-car race engine + DP optimizer + Monte Carlo (engine only, failed validation,
    documented limitation; optimizer and Monte Carlo not built)
 5. Live replay strategy engine + Fast Flag hook + backtest (DONE)
-6. Pit-wall dashboard + Arduino pit board + README/demo
+6. Pit-wall dashboard + README/demo (DONE; Arduino pit board cut, listed as planned work)
 
 ## Working style
 - Minimal explanation, direct bullets, step-by-step commands
@@ -504,6 +504,32 @@ Findings:
   break-even table: (1) pit-now plans ignored the stop at pit_lap (035cd85); (2) the
   false-call branch dropped the would-be neutralised laps (d28803b; SC and VSC "pit anyway"
   disagreed 7% vs 38%, now both 38%). Every number above is after both fixes.
+
+## Session 6 results (done): dashboard, README, hygiene
+- README rewritten: what the system does before what it cannot do; n = 1 framed as the
+  binding constraint (and why the break-even work is built off 724 hypothetical calls so it
+  does not rest on n = 1); a section on how the two Session 5 analysis bugs surfaced (a
+  result too clean to believe, then an internal inconsistency), including that the
+  mechanism tests would not have caught either; three-command demo note.
+- src/dashboard.py + dashboard/ (FastAPI, vanilla JS, no CDN): lap-by-lap replay of
+  2025 United States and Singapore. Nothing after the current lap renders. Decision cards
+  show P(pit better) as a range over rho 0 / 0.5 / 0.9, gains if real / false, both plans,
+  the soft p50 sensitivity and the h > 30 floor note. "overlapping" is neutral grey, never
+  coloured as a recommendation. The blind window renders as "no decision: model has no
+  anchor yet (laps 2-4 skipped)" on all 20 cars at the US call. A call's outcome appears
+  only once the replay passes the matching window, so the Singapore false call teaches
+  itself without leaking.
+- src/dashboard_data.py writes committed snapshots to data/demo/ (about 200 KB), so the
+  demo runs from a fresh clone with no FastF1 download and no Fast Flag timeline.
+- Fix: decide() early returns now carry soft_bias_s. Without it the 20 blind-window cars
+  were dropped by any filter on that field (they vanished from the export and the report
+  printed an empty count). No analysis numbers changed.
+- Hygiene: scipy added to requirements (src/live.py imports it directly; it was only
+  present transitively via scikit-learn), fastapi and uvicorn added, stray ingest.log
+  untracked, .claude/ and *.log ignored. Fresh clone verified: 55 tests pass and the
+  dashboard serves with no data rebuild.
+- NOT done: push to GitHub (needs interactive credentials; run `git push origin main`),
+  and CI therefore unverified since dcd4b22.
 
 ## Session 6 brief: pit-wall dashboard, README, demo
 The demo is what makes Sessions 4-5 showable. Protect the time; build nothing new in the
