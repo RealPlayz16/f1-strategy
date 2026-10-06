@@ -64,6 +64,32 @@ def dirty_air_penalty(gap_s: np.ndarray | float, d0: float = DIRTY_AIR_D0_S) -> 
                                                                      0.0, frac))
 
 
+def causal_coverage(state: pd.DataFrame) -> pd.Series:
+    """Per (race, driver, lap): has this car had a clean lap with more than FREE_AIR_GAP_S of
+    clear air SO FAR in its current stint, up to and including this lap.
+
+    This is NOT the flag behind free_pace / free_delta. free_pace takes the median over the
+    clear-air laps of the WHOLE stint, so a car that only gets clear air later in a stint is
+    still "covered" at the start of it. That is fine for a retrospective fit and impossible
+    for a forward-running simulator, which is why the race engine needs this version instead.
+    The two differ by about 31 percentage points in every gap bin (train): whole-stint
+    48 / 44 / 56 / 64% at 0-0.5 / 0.5-1 / 1-1.5 / 1.5-2 s against causal 17 / 16 / 24 / 33%.
+    Causal coverage is mostly a function of lap-within-stint, not gap: 3.4% over laps 1-3 of a
+    stint rising to 47.5% past lap 21, against a 17 to 33% range across gap bins.
+
+    A battle pair is covered only when BOTH cars are, as free_delta needs both free paces.
+    """
+    s = state.sort_values(["race", "driver", "lap"])
+    free = (s["is_clean"] & (s["gap_prev"] > FREE_AIR_GAP_S)).astype(int)
+    cum = free.groupby([s["race"], s["driver"], s["stint"]]).cumsum()
+    return pd.Series(
+        (cum > 0).to_numpy(),
+        index=pd.MultiIndex.from_arrays([s["race"], s["driver"], s["lap"]],
+                                        names=["race", "driver", "lap"]),
+        name="covered",
+    )
+
+
 def load_train() -> pd.DataFrame:
     laps = add_split(pd.read_parquet(LAPS_PATH).drop(columns=["split"], errors="ignore"))
     laps = laps[laps["split"] == "train"].copy()

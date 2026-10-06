@@ -88,7 +88,7 @@ import pandas as pd
 
 from src.overtake_model import features as pass_features
 from src.rules import drs_enabled
-from src.traffic import DIRTY_AIR_D0_S, dirty_air_penalty
+from src.traffic import DIRTY_AIR_D0_S, FREE_AIR_GAP_S, causal_coverage, dirty_air_penalty
 
 STATE_PATH = Path("data/processed/traffic_laps.parquet")
 PITLOSS_PATH = Path("data/processed/pitloss_by_track.parquet")
@@ -130,6 +130,7 @@ class Params:
     soft_bias: float = 0.0
     pass_scale: float = 1.0
     restart_gap: float = SC_RESTART_GAP_S
+    route_missing: bool = True   # Session 8: see the free_missing routing note
 
 
 @dataclass
@@ -250,6 +251,10 @@ def simulate(race: Race, pace, params: Params, pass_model: PassModel,
     battle = {}
     rows = []
     prev_pitting: set[str] = set()
+    # Causal clear-air history, reset on every stop. A car is 'covered' once it has run a
+    # green non-pit lap more than FREE_AIR_GAP_S behind the car ahead in THIS stint. The
+    # pass model's free_delta needs both cars covered; see traffic.causal_coverage.
+    clear_air = dict.fromkeys(t, False)
     for lap in range(2, race.race_laps + 1):
         active = [d for d in sorted(t, key=t.get) if race.last_lap.get(d, 0) >= lap]
         if not active:
@@ -258,6 +263,9 @@ def simulate(race: Race, pace, params: Params, pass_model: PassModel,
             age[d] += 1
         neutral = race.neutral.get(lap)
         pitting = {d for d in active if lap in pits.get(d, {})}
+        gap_ahead = {active[0]: np.inf}          # the leader runs in clear air
+        for i in range(1, len(active)):
+            gap_ahead[active[i]] = t[active[i]] - t[active[i - 1]]
 
         # base lap time: own pace, before dirty air and before the held rule
         base, free = {}, {}
@@ -312,7 +320,12 @@ def simulate(race: Race, pace, params: Params, pass_model: PassModel,
                 b = pd.DataFrame(
                     {
                         "gap_before_s": [g for _, _, g in pairs],
-                        "free_delta": [free[a] - free[d] for d, a, _ in pairs],
+                        "free_delta": [
+                            free[a] - free[d]
+                            if (not params.route_missing
+                                or (clear_air[d] and clear_air[a])) else np.nan
+                            for d, a, _ in pairs
+                        ],
                         "tyre_age_delta": [age[a] - age[d] for d, a, _ in pairs],
                         "compound_pair": [f"{compound[d]}-{compound[a]}" for d, a, _ in pairs],
                         "laps_in_battle": [battle[(d, a)] for d, a, _ in pairs],
@@ -328,6 +341,7 @@ def simulate(race: Race, pace, params: Params, pass_model: PassModel,
                         pair_log.append(
                             {"lap": lap, "gap": gg, "free_delta": free[aa] - free[dd],
                              "p_pass": float(pp), "passed": bool(ok),
+                             "covered": bool(clear_air[dd] and clear_air[aa]),
                              "elig": dd not in prev_pitting and aa not in prev_pitting}
                         )
 
@@ -369,6 +383,14 @@ def simulate(race: Race, pace, params: Params, pass_model: PassModel,
             t[d] = arr[d]
             if d in pitting:
                 compound[d], age[d] = pits[d][lap], 0.0
+        # Only now, so the features above saw the state as of the previous lap. Matches
+        # traffic.py's is_clean by excluding neutral laps, the in-lap and the out-lap.
+        for d in active:
+            if (not neutral and d not in pitting and d not in prev_pitting
+                    and gap_ahead[d] > FREE_AIR_GAP_S):
+                clear_air[d] = True
+        for d in pitting:
+            clear_air[d] = False                  # new stint, clear-air history resets
         prev_pitting = pitting
     out = pd.DataFrame(rows)
     return add_order(out)
@@ -473,6 +495,10 @@ def main(argv: list[str] | None = None) -> int:
         params.restart_gap = float(argv[argv.index("--restart-gap") + 1])
         tag = f"_restart{params.restart_gap:g}"
         print(f"restart gap override: {params.restart_gap} s")
+    if "--no-route-missing" in argv:            # pre-Session 8 behaviour, always covered
+        params.route_missing = False
+        tag += "_noroute"
+        print("free_missing routing OFF: every pair takes the covered branch")
 
     state = oracle_pace(pd.read_parquet(STATE_PATH))
     sc = pd.read_parquet(SC_PATH)
@@ -606,12 +632,24 @@ def main(argv: list[str] | None = None) -> int:
     oof = oof[oof["split"] == "train"].copy()
     oof["bin"] = pd.cut(oof["gap_before_s"], BATTLE_BINS, right=False, labels=BATTLE_LABELS)
     oof = oof.dropna(subset=["bin"])
+    # Causal coverage of the same battle rows: what a forward-running engine can know.
+    # A pair is covered only when both cars are, as of the end of lap k-1.
+    cc = causal_coverage(state)
+    oof["race"] = (oof["season"].astype(str) + "_"
+                   + oof["round"].astype(str).str.zfill(2))
+    i_self = pd.MultiIndex.from_arrays([oof["race"], oof["driver"], oof["lap"] - 1])
+    i_ahead = pd.MultiIndex.from_arrays([oof["race"], oof["ahead"], oof["lap"] - 1])
+    oof["causal"] = (cc.reindex(i_self).fillna(False).to_numpy()
+                     & cc.reindex(i_ahead).fillna(False).to_numpy())
     grp = oof.groupby("bin", observed=True)
     cov_rate = grp.apply(
         lambda d: d.loc[d["free_delta"].notna(), "passed"].mean(), include_groups=False
     ).rename("covered_rate")
     coverage = grp["free_delta"].apply(lambda x: float(x.notna().mean())).rename("coverage")
-    pop = pop.join(act_rate).join(cov_rate).join(coverage)
+    coverage_causal = grp["causal"].mean().rename("coverage_causal")
+    sim_cov = pl.groupby("bin", observed=True)["covered"].mean().rename("sim_coverage")
+    pop = pop.join(act_rate).join(cov_rate).join(coverage).join(coverage_causal).join(sim_cov)
+    pop["cov_err_pp"] = ((pop["sim_coverage"] - pop["coverage_causal"]) * 100).round(1)
     pop["vs_blend"] = (pop["mean_p"] / pop["actual_rate"]).round(2)
     pop["vs_covered"] = (pop["mean_p"] / pop["covered_rate"]).round(2)
     pop["branch_mismatch"] = (pop["covered_rate"] / pop["actual_rate"]).round(2)
@@ -623,8 +661,15 @@ def main(argv: list[str] | None = None) -> int:
     pd.set_option("display.width", 220)
     print("\nPAIR POPULATION: simulated battle pairs vs battles.parquet, by gap bin")
     print(pop.round(3).to_string())
-    print("  vs_blend splits into branch_mismatch (the engine is always on the covered")
-    print("  branch) times vs_covered (how much the simulated pair population differs).")
+    print("  vs_blend splits into branch_mismatch (the covered branch the engine used to take")
+    print("  unconditionally) times vs_covered (how much the simulated pair population differs).")
+    print("\nCOVERAGE ROUTING (Session 8). Criterion fixed before the run: simulated coverage")
+    print("within 5 pp of the real CAUSAL rate per bin, NOT of the whole-stint rate, which no")
+    print("forward-running simulator can reproduce. Threshold and stint window not tuned.")
+    print(pop[["coverage", "coverage_causal", "sim_coverage", "cov_err_pp"]].round(3).to_string())
+    ok = pop["cov_err_pp"].abs().le(5.0)
+    print(f"  bins within 5 pp of the causal rate: {int(ok.sum())} of {len(ok)}"
+          f"  -> {'PASS' if ok.all() else 'MISS'}")
     # Decomposition of the pass miss: how much is too many battle laps, and how much is the
     # wrong population within those laps.
     sim_p = (pop["laps_per_race"] * pop["mean_p"]).sum()

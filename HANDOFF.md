@@ -21,7 +21,8 @@ triggers. Delivered with a pit-wall dashboard and an Arduino "BOX" pit board.
 6. Pit-wall dashboard + README/demo (DONE; Arduino pit board cut, listed as planned work)
 7. Engine following model rework (DONE as a rework; validation still fails, cause now
    identified and split between the engine and the pass model. See Session 7 results.)
-8. free_missing routing, then expand the holdout (NOT STARTED. See Session 8 brief.)
+8. free_missing routing (DONE, misses its own criterion in 1 of 4 bins, does not fix the
+   engine, kept for correctness), then expand the holdout (NOT STARTED)
 
 ## Working style
 - Minimal explanation, direct bullets, step-by-step commands
@@ -769,6 +770,98 @@ README (what a reviewer opens first):
   measured, soft p50 bias, h=30 floor, pass model over-predicts on unseen tracks.
 
 Carries: none of the Session 4 optimizer work exists; do not demo strategy rankings.
+
+## Session 8 results, item 1 (done): free_missing routing
+
+Built the routing identified in Session 7. The engine now tracks, per car, whether it has had
+a green non-pit lap more than traffic.FREE_AIR_GAP_S (3.0 s) behind the car ahead SO FAR in
+its current stint, resets that on every stop, and sets free_delta to NaN for a battle pair
+unless BOTH cars qualify. The pass model then takes its missing-flag branch, as it would have
+in the data. Params.route_missing, default True; python -m src.engine --no-route-missing
+reproduces the pre-Session 8 behaviour exactly (no RNG draws were added, so the off path is
+bit-identical to the Session 7 run).
+
+### PARTIAL FIX BY CONSTRUCTION, not a fix that happened to fall short
+The pass model's free_missing flag was fitted NON-CAUSALLY. traffic.py builds free_pace from
+the clear-air laps of the WHOLE stint, so a car that only gets clear air later in a stint is
+already "covered" at the start of it. A forward-running engine cannot reproduce that, and
+nothing in this session changes it. Measured on train battles at 0-0.5 s:
+    whole-stint covered    45.4%        causal covered      53.7%
+    whole-stint uncovered  19.1%        causal uncovered    27.4%
+Routing causally moves the engine from querying a 45.4% branch for every pair to querying a
+19.1% branch for about 83% of them, while the population it is standing in for passes at
+27.4%. The mismatch INVERTS rather than closing. The complete fix is a refit of
+data/models/pass_model.json with a causal coverage flag (src/traffic.py causal_coverage is
+the definition). THAT IS THE NEXT STEP ON THE PASS MODEL AND IT WAS NOT ATTEMPTED HERE.
+
+### Success criterion, fixed before the run: MISS, 3 of 4 bins
+Simulated coverage within 5 pp of the real CAUSAL rate per bin, not the whole-stint rate.
+Threshold and stint window were NOT tuned.
+    bin      whole-stint   causal   simulated   error
+    0-0.5          0.482    0.167       0.240   +7.3 pp   MISS
+    0.5-1          0.441    0.163       0.178   +1.5 pp
+    1-1.5          0.555    0.237       0.246   +0.8 pp
+    1.5-2          0.644    0.330       0.302   -2.8 pp
+Checked and excluded as the cause of the 0-0.5 overshoot: the engine's clear-air test cannot
+model is_clean's deleted, inaccurate and outlier exclusions, but those account for only 1.4%
+of the laps the engine would count as clear air, nowhere near 7.3 pp. MECHANISM NOT
+IDENTIFIED. It sits in the same bin as the open Session 7 finding and is not to be hunted
+without a mechanism to test.
+
+### Effect on the engine (reported whether or not it helps, per the brief)
+Scored passes 72.0 -> 60.6 against 35.1 actual, so 2.05x -> 1.73x. Decomposition, adjacent
+pairs per race:
+    actual                     31.3
+    sim laps, blended rate     56.6
+    sim laps, covered rate     82.8     the extreme the engine used to sit at
+    sim laps, SIM rate         65.4     was 79.7 before routing
+The routing did what it was designed to do: it moved the engine off the covered extreme and
+roughly two thirds of the way to the blend. It did NOT fix the engine.
+
+Battle-lap distribution per race, before -> after against target:
+    0-0.5   133.1 -> 134.2   (63.2)   2.11 -> 2.12   unchanged, still the whole failure
+    0.5-1   148.7 -> 174.7  (162.5)   0.92 -> 1.07   crossed over
+    1-1.5    98.2 -> 101.1  (102.3)   0.96 -> 0.99
+    1.5-2    69.0 ->  67.4   (87.0)   0.79 -> 0.78
+    total   448.9 -> 477.4  (415.0)   1.08 -> 1.15   WORSE
+Finishing order slightly worse: Spearman 0.951 -> 0.941, mean position error 1.17 -> 1.27,
+median gap error 12.0 -> 13.7 s, winner right 67% -> 69%.
+The demoted following curve now reads 0.82 at 0-0.5 against a target of 0.80 and 0.78 at
+0.5-1 against 0.33. The first is not evidence of anything (see why it was demoted) and the
+second got considerably worse: fewer passes means cars are held longer.
+
+KEPT ON BY DEFAULT ANYWAY. The brief is right that this is a defect in how every consumer
+queries the pass model, independent of the engine, so correctness decides it rather than the
+headline number. Note the Session 7 corollary: the direction a number moves is no evidence
+about a fix, and here it moved both ways at once.
+
+### Two facts about coverage worth carrying
+- COVERAGE IS MOSTLY STINT POSITION, NOT GAP. Causal coverage by lap-within-stint: 3.4% over
+  laps 1-3, 11.7% over 4-6, 18.0% over 7-10, 32.0% over 11-20, 47.5% past 21. That is a 14x
+  range, against roughly 2x across gap bins (17 to 33%). Consequence: an undercut compares
+  pace LATE in a stint (47.5% covered) against pace on the OUT-LAP and the three laps after
+  (3.4% covered). Traffic cost on pit exit, which Session 7 listed as blocked, sits in the
+  worst-covered region of the entire dataset, so pass probabilities there come almost
+  entirely from the missing branch. Any later work on undercut or overcut modelling has to
+  deal with this first.
+- WHY BOTH CAUSAL RATES ARE HIGHER THAN THEIR WHOLE-STINT COUNTERPARTS. It is arithmetic, not
+  an effect. Four cells at 0-0.5 s:
+      whole-stint uncovered, causal uncovered   n 753   rate 0.191
+      whole-stint COVERED,   causal uncovered   n 458   rate 0.410
+      whole-stint covered,   causal covered     n 242   rate 0.537
+      whole-stint uncovered, causal covered     n   0             (confirms causal is a
+                                                                   strict subset, no leak)
+  The "covered later, not yet" group sits BETWEEN the two whole-stint rates. Reclassifying it
+  removes the lowest-rate members from the covered group (0.454 -> 0.537) and adds the
+  highest-rate members to the uncovered group (0.191 -> 0.274), so both averages rise from
+  one group moving. There is nothing further to read into it.
+
+### New in the code
+- src/traffic.py causal_coverage(state): the single definition, per (race, driver, lap), of
+  whether a car has had clear air so far in its current stint. Use it rather than reinventing
+  it; the docstring records how it differs from free_pace and by how much.
+- src/engine.py: Params.route_missing, clear-air tracking in simulate(), covered flag in the
+  pair log, and a COVERAGE ROUTING table in the run output carrying the criterion.
 
 ## Session 8 brief: free_missing routing, then expand the holdout
 
