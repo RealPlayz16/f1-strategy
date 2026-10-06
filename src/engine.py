@@ -98,6 +98,7 @@ REPLAY_PATH = Path("data/processed/engine_replay.parquet")
 VALIDATION_PATH = Path("data/processed/engine_validation.json")
 FOLLOWING_PATH = Path("data/processed/engine_following.parquet")
 BATTLES_SIM_PATH = Path("data/processed/engine_battles.parquet")
+PAIRS_SIM_PATH = Path("data/processed/engine_pairs.parquet")
 
 SEED = 42
 BATTLE_GAP_S = 2.0
@@ -234,15 +235,20 @@ def build_race(state: pd.DataFrame, sc: pd.DataFrame, pitloss: pd.DataFrame,
 
 def simulate(race: Race, pace, params: Params, pass_model: PassModel,
              noise: np.ndarray, rng: np.random.Generator,
-             strategies: dict[str, dict[int, str]] | None = None) -> pd.DataFrame:
+             strategies: dict[str, dict[int, str]] | None = None,
+             pair_log: list | None = None) -> pd.DataFrame:
     """One race. pace(driver, lap, compound, tyre_life) -> free-air lap time.
-    strategies overrides race.pits for any driver given. Returns one row per car-lap."""
+    strategies overrides race.pits for any driver given. Returns one row per car-lap.
+    pair_log, if given, collects one row per battle pair drawn against (gap, free-air
+    pace delta, predicted pass probability), for the population comparison against
+    battles.parquet. Diagnostic only; it does not affect the simulation."""
     pits = {**race.pits, **(strategies or {})}
     t = dict(race.t_lap1)
     compound = {d: race.start_compound[d] for d in t}
     age = {d: race.start_age[d] for d in t}
     battle = {}
     rows = []
+    prev_pitting: set[str] = set()
     for lap in range(2, race.race_laps + 1):
         active = [d for d in sorted(t, key=t.get) if race.last_lap.get(d, 0) >= lap]
         if not active:
@@ -316,6 +322,13 @@ def simulate(race: Race, pace, params: Params, pass_model: PassModel,
                 p_pass = params.pass_scale * pass_model.predict(b)
                 draws = rng.random(len(pairs)) < p_pass
                 passes = {d for (d, _, _), ok in zip(pairs, draws, strict=True) if ok}
+                if pair_log is not None:
+                    for (dd, aa, gg), pp, ok in zip(pairs, p_pass, draws, strict=True):
+                        pair_log.append(
+                            {"lap": lap, "gap": gg, "free_delta": free[aa] - free[dd],
+                             "p_pass": float(pp), "passed": bool(ok),
+                             "elig": dd not in prev_pitting and aa not in prev_pitting}
+                        )
 
             # Front to back, so every reference lap time is already final. A car cannot
             # finish ahead of ANY car that was ahead of it and that it did not pass, so the
@@ -337,8 +350,9 @@ def simulate(race: Race, pace, params: Params, pass_model: PassModel,
                     lt_final[d] = lt_final[block] + float(
                         dirty_air_penalty(t[d] - t[block], params.d0))
                     arr[d] = t[d] + lt_final[d]
-                if d in passes and arr[a] > arr[d] - PASS_MARGIN_S:
-                    # the passer keeps its own lap time; the passed car pays the swap
+                if d in passes and arr[a] < arr[d] + PASS_MARGIN_S:
+                    # the passer keeps its own lap time; the passed car pays the swap, so it
+                    # must end the lap at least PASS_MARGIN_S behind the passer
                     arr[a] = arr[d] + PASS_MARGIN_S
                     lt_final[a] = arr[a] - t[a]
                     if arr[a] > arr[cmax[-1]]:
@@ -354,6 +368,7 @@ def simulate(race: Race, pace, params: Params, pass_model: PassModel,
             t[d] = arr[d]
             if d in pitting:
                 compound[d], age[d] = pits[d][lap], 0.0
+        prev_pitting = pitting
     out = pd.DataFrame(rows)
     return add_order(out)
 
@@ -467,7 +482,7 @@ def main(argv: list[str] | None = None) -> int:
     rng = np.random.default_rng(SEED)
 
     pace_tab = state.set_index(["season", "round", "driver", "lap"])["pace_s"]
-    curves, fin_rows, bgaps = [], [], []
+    curves, fin_rows, bgaps, plogs = [], [], [], []
     races = state[["season", "round"]].drop_duplicates().sort_values(["season", "round"])
     n_races = len(races)
     for season, rnd in races.itertuples(index=False):
@@ -481,12 +496,17 @@ def main(argv: list[str] | None = None) -> int:
         n_act = int(((actual_passes["season"] == season)
                      & (actual_passes["round"] == rnd)).sum())
         for i in range(N_REPLAYS):
-            sim = simulate(race, pace, params, pm, noise, rng)
+            plog = [] if i < 5 else None
+            sim = simulate(race, pace, params, pm, noise, rng, pair_log=plog)
             sim = sim[np.isfinite(sim["t"])]
             if i < 5:
                 c = following_curve(sim, race)
                 c["season"], c["event"], c["replay"] = season, race.event, i
                 curves.append(c)
+            if plog is not None:
+                pl = pd.DataFrame(plog)
+                pl["season"], pl["event"], pl["replay"] = season, race.event, i
+                plogs.append(pl)
             bg = battle_gaps(sim)
             bgaps.append(pd.DataFrame({"gap": bg, "season": season, "event": race.event,
                                        "replay": i}))
@@ -560,7 +580,49 @@ def main(argv: list[str] | None = None) -> int:
     VALIDATION_PATH.with_name(f"{VALIDATION_PATH.stem}{tag}.json").write_text(
         json.dumps(res, indent=2), encoding="utf-8")
 
+    pl = pd.concat(plogs)
+    pl = pl[pl["elig"]]
+    pl["bin"] = pd.cut(pl["gap"], BATTLE_BINS, right=False, labels=BATTLE_LABELS)
+    pl = pl.dropna(subset=["bin"])
+    pop = pl.groupby("bin", observed=True).agg(
+        n=("free_delta", "size"),
+        delta_p25=("free_delta", lambda x: x.quantile(0.25)),
+        delta_med=("free_delta", "median"),
+        delta_p75=("free_delta", lambda x: x.quantile(0.75)),
+        share_not_faster=("free_delta", lambda x: float((x <= 0).mean())),
+        mean_p=("p_pass", "mean"),
+    )
+    pop["laps_per_race"] = (pop["n"] / 5 / n_races).round(1)
+    act = battles[battles["split"] == "train"].copy()
+    act["bin"] = pd.cut(act["gap_before_s"], BATTLE_BINS, right=False, labels=BATTLE_LABELS)
+    act = act.dropna(subset=["bin"])
+    act_rate = act.groupby("bin", observed=True)["passed"].mean().rename("actual_rate")
+    # Actual free-air delta on the covered subset, the only one comparable to the sim
+    # (the sim always knows free-air pace; reality knows it for 52% of battles).
+    cov = act[act["pace_delta_s"].notna()]
+    pop = pop.join(act_rate)
+    pop["enrichment"] = (pop["mean_p"] / pop["actual_rate"]).round(2)
+    res["pair_population"] = pop.reset_index().round(3).astype(str).to_dict(orient="records")
+    pl.to_parquet(PAIRS_SIM_PATH.with_name(f"{PAIRS_SIM_PATH.stem}{tag}.parquet"), index=False)
+    VALIDATION_PATH.with_name(f"{VALIDATION_PATH.stem}{tag}.json").write_text(
+        json.dumps(res, indent=2), encoding="utf-8")
+
     pd.set_option("display.width", 220)
+    print("\nPAIR POPULATION: simulated battle pairs vs battles.parquet, by gap bin")
+    print(pop.round(3).to_string())
+    print(f"  actual covered battles n = {len(cov)}, "
+          f"share of all actual battles {len(cov) / len(act):.2f}; sim is 100% covered")
+    # Decomposition of the pass miss: how much is too many battle laps, and how much is the
+    # wrong population within those laps.
+    sim_p = (pop["laps_per_race"] * pop["mean_p"]).sum()
+    counterfactual = (pop["laps_per_race"] * pop["actual_rate"]).sum()
+    act_laps = (act.groupby("bin", observed=True).size() / n_races)
+    actual_p = (act_laps * pop["actual_rate"]).sum()
+    print(f"\n  pass decomposition (adjacent pairs, drawn):"
+          f"\n    actual               {actual_p:.1f}"
+          f"\n    sim laps, actual rate {counterfactual:.1f}   (lap-count excess only)"
+          f"\n    sim laps, sim rate    {sim_p:.1f}   (adds population enrichment)")
+
     print("\nPRIMARY TARGET: battle laps per race by gap bin (out of sample):")
     print(dist.round(2).to_string())
     print(f"  total  sim {dist['sim_per_race'].sum():.1f}  "
