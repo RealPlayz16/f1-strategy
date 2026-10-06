@@ -7,38 +7,48 @@ about 70% high at unseen tracks) and long stints (h = 30 tyre intervals are a fl
 do not average out. Every strategy claim must survive the joint bias sweep and the
 comparison with what teams actually ran (see HANDOFF.md).
 
-Each lap, for every car, front to back in the order at the end of the previous lap:
+FOLLOWING MODEL (Session 7). What holds a car back is a pace constraint, not a position, so
+there is no minimum gap anywhere in this engine. For car d with the nearest non-pitting car a
+ahead and gap g at the end of the previous lap:
+
+  unconstrained   L0_d = free pace + lap noise (+ soft bias) + dirty_air_penalty(g, d0)
+  held iff        t_d + L0_d < arrival of a   (it would finish ahead of a car it did not pass)
+  held            L_d = L_a + dirty_air_penalty(g, d0),  L_a = a's final lap time this lap
+
+Held cars therefore end the lap g + aero(g) behind, and L_d > L0_d always (held implies
+L0_d < L_a - g < L_a), so the rule can only ever slow a car down. A car settles where its
+pace in hand is cancelled by the aero penalty, aero(g*) = delta; a car with more than d0 in
+hand has no equilibrium and runs right up behind. Trains form because L_a already carries
+a's own held time. Earlier versions set the gap as a position rule and failed validation
+twice (sampled 0.94 s floor, then a 0.2 s constant); see HANDOFF.md.
+
+  dirty_air_penalty is the AERO-ONLY curve (src/traffic.py). Being held up is produced here,
+  mechanically, and must never be taken from the pooled curve as well.
+
+Each lap, every car, front to back in the order at the end of the previous lap:
   lap time = free-air pace + lap noise (+ soft bias on softs) (+ pit loss on an in-lap)
-  within 1 s of the car ahead: + dirty_air_penalty(gap, d0)          (src/traffic.py)
+  + dirty_air_penalty(gap to the reference car, d0)
   within 2 s: draw a pass, p = pass_scale * pass model               (src/overtake_model.py)
-    pass:    finishes the lap ahead of that car
-    no pass: cannot finish ahead; must be at least min_gap behind at the line (0.2 s,
-             a STATED ASSUMPTION, swept 0.1 to 0.4 in the joint Monte Carlo). Being held
-             up comes from here, never from the dirty air curve.
-             Why a constant: every gap statistic we have comes from the same following
-             laps as the validation curve, so deriving it from data would make the
-             validation self-fulfilling. The first version sampled this gap from where
-             stuck cars end up (median 0.94 s) and used it as a floor; it bound on cars that
-             were never held up (Session 4 validation failure, see HANDOFF.md).
-  a car pitting on this lap, or ahead of a car pitting, is not constrained (stops reorder)
-SC / VSC laps: every car runs the race's actual median lap time for that lap, no passing;
-at the end of an SC the field closes up to SC_RESTART_GAP_S per position.
+    pass:    the PASSED car is pushed to the passer's arrival + PASS_MARGIN_S. The passer
+             keeps its own lap time and gains nothing it did not run (ASSUMPTION about who
+             pays the swap; the pass model is already 15% high, so the bias is taken in the
+             direction that does not compound it). The passer is then re-tested against the
+             car that was ahead of the one it passed, so it cannot clear a third car with
+             no draw.
+    no pass: the held rule above
+  a car pitting on this lap is unconstrained (the stop reorders); a car behind it references
+  the nearest non-pitting car ahead, as battles.parquet does.
+SC / VSC laps: every car runs the race's actual median lap time for that lap, no passing; at
+the end of an SC the field closes up to SC_RESTART_GAP_S per position. That gap is MEASURED:
+median gap to the car ahead on the last lap of each train SC, 0.41 s over 11 events and 173
+gaps (per-race 0.28 to 0.54). It is a starting gap on a neutral lap, and the validation curve
+excludes neutral laps, so it does not feed its own target.
 Lap 1 comes from data (start not modelled). Backmarkers are not modelled (blue flags).
 
 Pace: a function (driver, lap, compound, tyre_life) -> free-air lap time in absolute seconds.
 The validation replay uses each car's measured free-air pace (oracle, actual strategy),
 which tests the engine mechanics apart from tyre model error. Lap noise is sampled from
 free-air laps' deviation from free-air pace (train, heavy tailed: sd 0.52, robust 0.27).
-
-KNOWN LIMITATION (Session 4, validation failed twice, not iterated further by decision):
-oracle-pace replay of 23 train races, lap time minus free-air pace by gap, target from data
-0.80 / 0.33 / 0.21 / 0.14 / 0.04 s at 0-0.5 / 0.5-1 / 1-1.5 / 1.5-2 / 2-3 s.
-  sampled held-gap floor:  1.06 / 1.03 / 0.52 / 0.20 / 0.00, passes 54.7 per race vs 35.1
-  0.2 s minimum gap:       0.48 / 0.26 / 0.02 / 0.01 / 0.00, passes 124.9 per race vs 35.1
-The two versions bracket reality: the real following distance depends on the situation
-(aero keeps a held car about half a second or more back), a constant floor does not
-reproduce it. With the 0.2 s floor, cars bunch and every bunched pair draws a pass each lap.
-Do not use this engine for overtaking-dependent or traffic-dependent strategy claims.
 
 Usage:
     python -m src.engine            (validation replay on train races)
@@ -64,10 +74,14 @@ SC_PATH = Path("data/processed/sc_events.parquet")
 PASS_MODEL_PATH = Path("data/models/pass_model.json")
 REPLAY_PATH = Path("data/processed/engine_replay.parquet")
 VALIDATION_PATH = Path("data/processed/engine_validation.json")
+FOLLOWING_PATH = Path("data/processed/engine_following.parquet")
 
 SEED = 42
 BATTLE_GAP_S = 2.0
-SC_RESTART_GAP_S = 1.0
+# Measured: median gap to the car ahead on the last lap of each train SC (11 events, 173
+# gaps, per-race medians 0.28 to 0.54). Replaces a stated 1.0 s. Neutral-lap population,
+# which the green-flag following curve excludes.
+SC_RESTART_GAP_S = 0.41
 PASS_MARGIN_S = 0.1
 FALLBACK_QUANTILE = 0.25
 FOLLOW_TARGET = {"0-0.5": 0.80, "0.5-1": 0.33, "1-1.5": 0.21, "1.5-2": 0.14, "2-3": 0.04}
@@ -81,7 +95,7 @@ class Params:
     d0: float = DIRTY_AIR_D0_S
     soft_bias: float = 0.0
     pass_scale: float = 1.0
-    min_gap: float = 0.2
+    restart_gap: float = SC_RESTART_GAP_S
 
 
 @dataclass
@@ -205,7 +219,9 @@ def simulate(race: Race, pace, params: Params, pass_model: PassModel,
             age[d] += 1
         neutral = race.neutral.get(lap)
         pitting = {d for d in active if lap in pits.get(d, {})}
-        cand, free = {}, {}
+
+        # base lap time: own pace, before dirty air and before the held rule
+        base, free = {}, {}
         for d in active:
             free[d] = pace(d, lap, compound[d], age[d])
             if not neutral and not np.isfinite(free[d]):
@@ -218,18 +234,36 @@ def simulate(race: Race, pace, params: Params, pass_model: PassModel,
                     lt += params.soft_bias
             if d in pitting:
                 lt += race.pit_loss["green" if not neutral else neutral[0].lower()]
-            cand[d] = t[d] + lt
+            base[d] = lt
 
         passes = set()
-        if not neutral:
-            pairs = []
-            for i in range(1, len(active)):
-                d, a = active[i], active[i - 1]
-                gap = t[d] - t[a]
-                if d in pitting or a in pitting:
-                    battle.pop((d, a), None)
+        arr, lt_final = {}, {}
+        if neutral:
+            for d in active:
+                arr[d], lt_final[d] = t[d] + base[d], base[d]
+            if lap in race.sc_end_laps:
+                order = sorted(active, key=arr.get)
+                for k, d in enumerate(order[1:], start=1):
+                    arr[d] = arr[order[0]] + k * params.restart_gap
+                    lt_final[d] = arr[d] - t[d]
+        else:
+            # reference car: the nearest car ahead that is not pitting this lap, as
+            # battles.parquet defines "the eligible car directly ahead". A pitting car is
+            # unconstrained and is not a reference (the stop reorders).
+            ref, prev_ok = {}, None
+            for d in active:
+                if d in pitting:
                     continue
-                cand[d] += float(dirty_air_penalty(gap, params.d0))
+                ref[d] = prev_ok
+                prev_ok = d
+
+            pairs = []
+            for d in active:
+                a = ref.get(d)
+                if a is None:
+                    continue
+                gap = t[d] - t[a]
+                base[d] += float(dirty_air_penalty(gap, params.d0))
                 if gap < BATTLE_GAP_S:
                     battle[(d, a)] = battle.get((d, a), 0) + 1
                     pairs.append((d, a, gap))
@@ -247,31 +281,45 @@ def simulate(race: Race, pace, params: Params, pass_model: PassModel,
                         "event": race.event,
                     }
                 )
-                p = params.pass_scale * pass_model.predict(b)
-                draws = rng.random(len(pairs)) < p
-                for (d, a, _), ok in zip(pairs, draws, strict=True):
-                    if ok:
-                        passes.add(d)
-                        cand[d] = min(cand[d], cand[a] - PASS_MARGIN_S)
-            # resolve front to back: a car that did not pass stays at least min_gap behind
-            for i in range(1, len(active)):
-                d, a = active[i], active[i - 1]
-                if d in pitting or a in pitting or d in passes:
+                p_pass = params.pass_scale * pass_model.predict(b)
+                draws = rng.random(len(pairs)) < p_pass
+                passes = {d for (d, _, _), ok in zip(pairs, draws, strict=True) if ok}
+
+            # Front to back, so every reference lap time is already final. A car cannot
+            # finish ahead of ANY car that was ahead of it and that it did not pass, so the
+            # binding car is the resolved car with the latest arrival, not always the nearest
+            # one: a car pushed back by a pass can end up blocking the cars behind it.
+            cmax = []
+            for d in active:
+                a = ref.get(d)
+                if a is None:
+                    arr[d], lt_final[d] = t[d] + base[d], base[d]
+                    if d not in pitting:
+                        cmax.append(d)
                     continue
-                if t[d] - t[a] < BATTLE_GAP_S or cand[d] < cand[a]:
-                    cand[d] = max(cand[d], cand[a] + params.min_gap)
-        elif lap in race.sc_end_laps:
-            order = sorted(active, key=cand.get)
-            for k, d in enumerate(order[1:], start=1):
-                cand[d] = cand[order[0]] + k * SC_RESTART_GAP_S
+                arr[d], lt_final[d] = t[d] + base[d], base[d]
+                block = cmax[-2] if (d in passes and len(cmax) >= 2) else cmax[-1]
+                if block is not None and arr[d] < arr[block]:
+                    # held: cannot use its pace advantage, so it runs the blocking car's lap
+                    # time plus the aero penalty. Ends the lap gap + aero(gap) behind.
+                    lt_final[d] = lt_final[block] + float(
+                        dirty_air_penalty(t[d] - t[block], params.d0))
+                    arr[d] = t[d] + lt_final[d]
+                if d in passes and arr[a] > arr[d] - PASS_MARGIN_S:
+                    # the passer keeps its own lap time; the passed car pays the swap
+                    arr[a] = arr[d] + PASS_MARGIN_S
+                    lt_final[a] = arr[a] - t[a]
+                    if arr[a] > arr[cmax[-1]]:
+                        cmax[-1] = a
+                cmax.append(d if arr[d] >= arr[cmax[-1]] else cmax[-1])
 
         for d in active:
             rows.append(
-                {"driver": d, "lap": lap, "t": cand[d], "lap_time": cand[d] - t[d],
+                {"driver": d, "lap": lap, "t": arr[d], "lap_time": lt_final[d],
                  "free_pace": free[d], "gap_prev": np.nan, "pit": d in pitting,
                  "neutral": bool(neutral), "passed": d in passes, "compound": compound[d]}
             )
-            t[d] = cand[d]
+            t[d] = arr[d]
             if d in pitting:
                 compound[d], age[d] = pits[d][lap], 0.0
     out = pd.DataFrame(rows)
@@ -320,14 +368,21 @@ def actual_finishing(state: pd.DataFrame, season: int, rnd: int) -> pd.DataFrame
         drop=True)
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    argv = sys.argv[1:] if argv is None else argv
+    params = Params()
+    tag = ""
+    if "--restart-gap" in argv:                 # isolation run, see HANDOFF Session 7
+        params.restart_gap = float(argv[argv.index("--restart-gap") + 1])
+        tag = f"_restart{params.restart_gap:g}"
+        print(f"restart gap override: {params.restart_gap} s")
+
     state = oracle_pace(pd.read_parquet(STATE_PATH))
     sc = pd.read_parquet(SC_PATH)
     pitloss = pd.read_parquet(PITLOSS_PATH)
     pm, noise = PassModel(), lap_noise(state)
     actual_passes = pd.read_parquet("data/processed/overtakes.parquet")
     rng = np.random.default_rng(SEED)
-    params = Params()
 
     pace_tab = state.set_index(["season", "round", "driver", "lap"])["pace_s"]
     curves, fin_rows = [], []
@@ -346,7 +401,9 @@ def main() -> int:
             sim = simulate(race, pace, params, pm, noise, rng)
             sim = sim[np.isfinite(sim["t"])]
             if i < 5:
-                curves.append(following_curve(sim, race))
+                c = following_curve(sim, race)
+                c["season"], c["event"], c["replay"] = season, race.event, i
+                curves.append(c)
             fin = finishing(sim)
             pos_sim = {d: k for k, d in enumerate(fin["driver"])}
             common = [d for d in act["driver"] if d in pos_sim]
@@ -369,6 +426,8 @@ def main() -> int:
                     "median_abs_gap_err_s": float(np.median(np.abs(
                         gaps_s[same_lap] - gaps_a[same_lap]))) if same_lap else np.nan,
                     "passes_sim": int(sim["passed"].sum()), "passes_actual": n_act,
+                    "battle_laps": int(((sim["gap_prev"] < BATTLE_GAP_S) & ~sim["neutral"]
+                                         & ~sim["pit"]).sum()),
                 }
             )
         print(f"{season} {race.event}: done", flush=True)
@@ -378,25 +437,39 @@ def main() -> int:
                         labels=list(FOLLOW_TARGET) + [">=3"])
     curve = cur.groupby("bin", observed=True)["dev"].agg(["median", "size"])
     curve["target"] = pd.Series(FOLLOW_TARGET)
+    # Shape, not just the level: the 0-0.5 median is a prediction about which cars end up
+    # there (dev = their pace in hand, for cars with more than d0 in hand and so no
+    # equilibrium), not a fitted quantity. A right-skewed spread is the model working; a
+    # spike at d0 would mean the median is right by accident.
+    qs = [0.1, 0.25, 0.5, 0.75, 0.9]
+    shape = cur.groupby("bin", observed=True)["dev"].describe(percentiles=qs)
+    cur.to_parquet(FOLLOWING_PATH.with_name(f"{FOLLOWING_PATH.stem}{tag}.parquet"), index=False)
     fin = pd.DataFrame(fin_rows)
-    fin.to_parquet(REPLAY_PATH, index=False)
+    fin.to_parquet(REPLAY_PATH.with_name(f"{REPLAY_PATH.stem}{tag}.parquet"), index=False)
     per_race = fin.groupby(["season", "event"]).agg(
         spearman=("spearman", "mean"), pos_err=("mean_abs_pos_err", "mean"),
         winner_correct=("winner_correct", "mean"), gap_err_s=("median_abs_gap_err_s", "median"),
         passes_sim=("passes_sim", "mean"), passes_actual=("passes_actual", "first"),
+        battle_laps=("battle_laps", "mean"),
     )
-    res = {"following_curve": curve.reset_index().astype(str).to_dict(orient="records"),
+    res = {"restart_gap_s": params.restart_gap,
+           "following_curve": curve.reset_index().astype(str).to_dict(orient="records"),
+           "following_shape": shape.reset_index().round(3).astype(str).to_dict(orient="records"),
            "per_race": per_race.reset_index().round(3).astype(str).to_dict(orient="records")}
-    VALIDATION_PATH.write_text(json.dumps(res, indent=2), encoding="utf-8")
+    VALIDATION_PATH.with_name(f"{VALIDATION_PATH.stem}{tag}.json").write_text(
+        json.dumps(res, indent=2), encoding="utf-8")
 
-    pd.set_option("display.width", 200)
+    pd.set_option("display.width", 220)
     print("\nfollowing curve, simulated (oracle pace) vs Session 3 data target:")
     print(curve.round(3).to_string())
+    print("\ndev distribution by bin (shape test, not just the level):")
+    print(shape.round(3).to_string())
     print("\nreplay of actual strategies, mean over replays:")
     print(per_race.round(3).to_string())
     print("\nall races:", per_race[["spearman", "pos_err", "winner_correct", "gap_err_s",
-                                    "passes_sim", "passes_actual"]].mean().round(3).to_dict())
-    print(f"\nwrote {REPLAY_PATH} and {VALIDATION_PATH}")
+                                    "passes_sim", "passes_actual", "battle_laps"]
+                                   ].mean().round(3).to_dict())
+    print(f"\nwrote {FOLLOWING_PATH} and {VALIDATION_PATH} (tag {tag!r})")
     return 0
 
 
