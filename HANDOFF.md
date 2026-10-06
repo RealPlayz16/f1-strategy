@@ -71,6 +71,54 @@ to the same number must agree. Mechanism tests would not have caught any of the 
   route. When a quantity has only one measurement, that is a gap in the method, not a sign
   the quantity is fine.
 
+## ENGINE LIMITATION: what the engine can and cannot be trusted for
+
+Read this before using the engine for anything. Sessions 4, 7 and 8 all feed it and it has
+survived three reworks.
+
+### The sharpest form of it, and the best quantified (Session 8)
+TRAFFIC COST ON PIT EXIT SITS AT 3.4% CAUSAL COVERAGE, THE WORST-COVERED REGION IN THE
+DATASET. Causal coverage is whether a car has had clear air so far in its current stint,
+which is what decides whether the pass model gets a real free-air pace delta or falls back to
+its missing flag (src/traffic.py causal_coverage). It is mostly a function of
+lap-within-stint, not of gap:
+    laps 1-3 of a stint   3.4%        laps 11-20   32.0%
+    laps 4-6             11.7%        laps 21+     47.5%
+    laps 7-10            18.0%                              (gap bins only span 17 to 33%)
+So an undercut compares pace LATE in a stint, 47.5% covered, against pace on the OUT-LAP and
+the three laps after it, 3.4% covered. The engine's pass probabilities in exactly the region
+where undercut and overcut modelling lives come almost entirely from the missing branch.
+
+And that branch is fitted on the wrong population. The flag behind it is NOT causal:
+free_pace uses the clear-air laps of the whole stint, so a car covered only later already
+counts as covered at the start. Session 8 measured the consequence at 0-0.5 s: routing
+causally makes the engine query a 19.1%-rate branch for about 83% of pairs, standing in for a
+population that actually passes at 27.4%. The mismatch inverts rather than closing, and no
+amount of engine work fixes it. THE COMPLETE FIX IS A REFIT OF data/models/pass_model.json
+WITH A CAUSAL COVERAGE FLAG. Until that happens, the region the engine is least able to model
+is the region the strategy work most needs.
+
+This is a better statement than the Session 4 one, which said only that the engine failed to
+reproduce following behaviour. It names a mechanism, a location and a size.
+
+### The counts
+- Scored passes 60.6 per race against 35.1 actual, 1.73x. Was 2.05x before the Session 8
+  free_missing routing.
+- Car-laps within 0.5 s of the car ahead 134.2 per race against 63.2, 2.12x. UNCHANGED by
+  every rework so far, and its mechanism is NOT IDENTIFIED. Not to be hunted without a
+  mechanism to test (user decision, Session 7).
+- Battle-lap distribution total 477.4 against 415.0. The other three gap bins are within 10,
+  7 and 22%.
+
+### Trustworthy
+Pit loss, SC / VSC neutralisation, compound rules, anything that runs on free-air pace.
+
+### NOT trustworthy, BLOCKED
+Traffic-dependent and overtake-dependent strategy claims. Undercut and overcut modelling,
+traffic cost on pit exit, and any claim that depends on track position. The optimizer, the
+joint Monte Carlo and the comparison with what teams actually ran were not built in Session 4
+and have not been built since.
+
 ## Stack and conventions
 - Python 3.11, fastf1, pandas, pyarrow, numpy, pyyaml, pytest, ruff
 - Later sessions: scikit-learn, lightgbm, torch, fastapi, uvicorn
@@ -659,13 +707,9 @@ This is instance 4 of the cross-measure pattern. See "Method: every real defect 
 found by two measurements disagreeing" near the top, which carries the full argument and both
 corollaries; do not re-derive it here.
 
-### What the engine can and cannot be trusted for (unchanged in substance)
-Trustworthy: pit loss, SC / VSC neutralisation, compound rules on free-air pace.
-NOT trustworthy: traffic-dependent or overtake-dependent strategy claims. Passes are
-over-predicted about 2.05x on scored swaps and car-laps at minimum gap 2.11x. Undercut and
-overcut modelling, traffic cost on pit exit and track-position-dependent claims remain
-BLOCKED. The optimizer, the joint Monte Carlo and the comparison with real strategies were
-not built in Session 4 and were not built here either.
+### What the engine can and cannot be trusted for
+Moved to "## ENGINE LIMITATION" near the top of this file, where it belongs. Sessions 4, 7
+and 8 all feed it.
 
 ### Artefacts
 engine_validation.json, engine_following.parquet, engine_battles.parquet (per-replay battle
@@ -836,14 +880,10 @@ headline number. Note the Session 7 corollary: the direction a number moves is n
 about a fix, and here it moved both ways at once.
 
 ### Two facts about coverage worth carrying
-- COVERAGE IS MOSTLY STINT POSITION, NOT GAP. Causal coverage by lap-within-stint: 3.4% over
-  laps 1-3, 11.7% over 4-6, 18.0% over 7-10, 32.0% over 11-20, 47.5% past 21. That is a 14x
-  range, against roughly 2x across gap bins (17 to 33%). Consequence: an undercut compares
-  pace LATE in a stint (47.5% covered) against pace on the OUT-LAP and the three laps after
-  (3.4% covered). Traffic cost on pit exit, which Session 7 listed as blocked, sits in the
-  worst-covered region of the entire dataset, so pass probabilities there come almost
-  entirely from the missing branch. Any later work on undercut or overcut modelling has to
-  deal with this first.
+- COVERAGE IS MOSTLY STINT POSITION, NOT GAP (3.4% over laps 1-3 of a stint against 47.5%
+  past lap 21, a 14x range, against roughly 2x across gap bins). This is the most important
+  thing in Session 8 and it is PROMOTED to "## ENGINE LIMITATION" near the top of this file.
+  Do not read it only as a Session 8 detail.
 - WHY BOTH CAUSAL RATES ARE HIGHER THAN THEIR WHOLE-STINT COUNTERPARTS. It is arithmetic, not
   an effect. Four cells at 0-0.5 s:
       whole-stint uncovered, causal uncovered   n 753   rate 0.191
