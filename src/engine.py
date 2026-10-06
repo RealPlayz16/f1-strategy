@@ -45,6 +45,28 @@ gaps (per-race 0.28 to 0.54). It is a starting gap on a neutral lap, and the val
 excludes neutral laps, so it does not feed its own target.
 Lap 1 comes from data (start not modelled). Backmarkers are not modelled (blue flags).
 
+VALIDATION TARGET (changed in Session 7). The primary target is now the BATTLE-LAP
+DISTRIBUTION by gap bin: car-laps per race spent within BATTLE_GAP_S of the eligible car
+directly ahead, 415 per race on train races, split 63.2 / 162.5 / 102.3 / 87.0 over
+0-0.5 / 0.5-1 / 1-1.5 / 1.5-2 s. It is measured from battles.parquet and NOTHING in the
+following model was fitted to it: d0 and the aero shape come from conditional mean lap times,
+free-air pace from clear-air laps, the pass model from pass outcomes. It is also a
+distribution over four bins rather than five conditional means, so it constrains where cars
+spend their time, which is what drives pass counts and traffic cost.
+  Measured exactly as overtakes.py measured it (see eligible_sim): ineligible cars removed
+  from the ordering, lap 1 and neutral laps on lap k dropped, the in-lap and out-lap dropped,
+  and a lap k-1 under a neutralisation KEPT, so restart laps count on both sides.
+  passes_sim is likewise scored as overtakes.py scores it (any swap in lap-end order between
+  eligible cars), not as the count of drawn passes; passes_drawn is kept beside it.
+
+  DEMOTED to a sanity check in the same session: the following curve (lap time minus free-air
+  pace by gap bin, target 0.80 / 0.33 / 0.21 / 0.14 / 0.04). Under the pace rule an unheld
+  car's dev is exactly dirty_air_penalty(gap), which is zero past 1.0 s by construction, so
+  the 1.5-2 and 2-3 bins read 0.000 and CANNOT FAIL. A near-match there is worth nothing.
+  The bins that can still move take d0, the aero shape and free-air pace from the same
+  following laps that produce the target, so none of the curve is out of sample. Keep
+  printing it, do not treat it as a test.
+
 Pace: a function (driver, lap, compound, tyre_life) -> free-air lap time in absolute seconds.
 The validation replay uses each car's measured free-air pace (oracle, actual strategy),
 which tests the engine mechanics apart from tyre model error. Lap noise is sampled from
@@ -75,6 +97,7 @@ PASS_MODEL_PATH = Path("data/models/pass_model.json")
 REPLAY_PATH = Path("data/processed/engine_replay.parquet")
 VALIDATION_PATH = Path("data/processed/engine_validation.json")
 FOLLOWING_PATH = Path("data/processed/engine_following.parquet")
+BATTLES_SIM_PATH = Path("data/processed/engine_battles.parquet")
 
 SEED = 42
 BATTLE_GAP_S = 2.0
@@ -84,6 +107,15 @@ BATTLE_GAP_S = 2.0
 SC_RESTART_GAP_S = 0.41
 PASS_MARGIN_S = 0.1
 FALLBACK_QUANTILE = 0.25
+# PRIMARY VALIDATION TARGET (Session 7): battle laps per race by gap bin, measured from
+# battles.parquet. Nothing in the following model was fitted to this distribution, and it
+# is a distribution rather than five conditional means. See the docstring.
+BATTLE_BINS = [0.0, 0.5, 1.0, 1.5, 2.0]
+BATTLE_LABELS = ["0-0.5", "0.5-1", "1-1.5", "1.5-2"]
+# SANITY CHECK ONLY, demoted in Session 7: the pace rule makes an unheld car's dev exactly
+# aero(gap), which is zero past 1.0 s by construction, so every bin past 1.0 s reads 0.000
+# and cannot fail. The remaining bins take d0, the aero shape and free-air pace from the
+# same following laps that produce the target.
 FOLLOW_TARGET = {"0-0.5": 0.80, "0.5-1": 0.33, "1-1.5": 0.21, "1.5-2": 0.14, "2-3": 0.04}
 GAP_BINS = [0.0, 0.5, 1.0, 1.5, 2.0, 3.0]
 N_REPLAYS = 20
@@ -356,6 +388,55 @@ def following_curve(sim: pd.DataFrame, race: Race) -> pd.DataFrame:
     return s[["gap_prev", "dev"]]
 
 
+def eligible_sim(sim: pd.DataFrame) -> pd.DataFrame:
+    """Reproduce overtakes.eligible_pairs on simulated laps, so the battle-lap count and the
+    pass count are measured exactly as battles.parquet and overtakes.parquet were.
+    One row per (driver, lap k) with cumulative time at the end of k-1 and of k. Drops lap 1,
+    laps under SC / VSC / red, the in-lap and the out-lap. Note that a lap k-1 under a
+    neutralisation is NOT dropped (overtakes.py flags lap k only), so restart laps count."""
+    s = sim.sort_values(["driver", "lap"]).copy()
+    g = s.groupby("driver")
+    s["t_prev"] = g["t"].shift(1)
+    s["lap_prev"] = g["lap"].shift(1)
+    s["pit_prev"] = g["pit"].shift(1)
+    ok = (
+        (s["lap"] >= 2)
+        & (s["lap_prev"] == s["lap"] - 1)
+        & s["t_prev"].notna()
+        & ~s["neutral"]
+        & ~s["pit"]
+        & ~s["pit_prev"].astype("boolean").fillna(True)
+    )
+    return s.loc[ok, ["driver", "lap", "t_prev", "t"]]
+
+
+def battle_gaps(sim: pd.DataFrame) -> np.ndarray:
+    """Gap to the eligible car directly ahead at the end of lap k-1, under BATTLE_GAP_S.
+    Ineligible cars are removed from the ordering first, as overtakes.py does."""
+    out = []
+    for _, d in eligible_sim(sim).groupby("lap"):
+        gaps = np.diff(np.sort(d["t_prev"].to_numpy()))
+        out.append(gaps[gaps < BATTLE_GAP_S])
+    return np.concatenate(out) if out else np.array([])
+
+
+def scored_passes(sim: pd.DataFrame) -> int:
+    """Passes as overtakes.py scores them: any swap in lap-end order between eligible cars,
+    not only adjacent pairs and not only drawn ones. This is what 35.1 per race counts."""
+    n = 0
+    for _, d in eligible_sim(sim).groupby("lap"):
+        tp, tc = d["t_prev"].to_numpy(), d["t"].to_numpy()
+        n += int(((tp[:, None] > tp[None, :]) & (tc[:, None] < tc[None, :])).sum())
+    return n
+
+
+def battle_target(battles: pd.DataFrame, n_races: int) -> pd.Series:
+    """Actual battle laps per race by gap bin, train only. Measured, never fitted."""
+    b = battles[battles["split"] == "train"]
+    binned = pd.cut(b["gap_before_s"], BATTLE_BINS, right=False, labels=BATTLE_LABELS)
+    return (b.groupby(binned, observed=True).size() / n_races).rename("target")
+
+
 def finishing(sim: pd.DataFrame) -> pd.DataFrame:
     last = sim.sort_values("lap").groupby("driver").tail(1)
     return last.sort_values(["lap", "t"], ascending=[False, True]).reset_index(drop=True)
@@ -382,11 +463,13 @@ def main(argv: list[str] | None = None) -> int:
     pitloss = pd.read_parquet(PITLOSS_PATH)
     pm, noise = PassModel(), lap_noise(state)
     actual_passes = pd.read_parquet("data/processed/overtakes.parquet")
+    battles = pd.read_parquet("data/processed/battles.parquet")
     rng = np.random.default_rng(SEED)
 
     pace_tab = state.set_index(["season", "round", "driver", "lap"])["pace_s"]
-    curves, fin_rows = [], []
+    curves, fin_rows, bgaps = [], [], []
     races = state[["season", "round"]].drop_duplicates().sort_values(["season", "round"])
+    n_races = len(races)
     for season, rnd in races.itertuples(index=False):
         race = build_race(state, sc, pitloss, season, rnd, params.phi)
         tab = pace_tab.loc[(season, rnd)]
@@ -404,6 +487,9 @@ def main(argv: list[str] | None = None) -> int:
                 c = following_curve(sim, race)
                 c["season"], c["event"], c["replay"] = season, race.event, i
                 curves.append(c)
+            bg = battle_gaps(sim)
+            bgaps.append(pd.DataFrame({"gap": bg, "season": season, "event": race.event,
+                                       "replay": i}))
             fin = finishing(sim)
             pos_sim = {d: k for k, d in enumerate(fin["driver"])}
             common = [d for d in act["driver"] if d in pos_sim]
@@ -425,7 +511,9 @@ def main(argv: list[str] | None = None) -> int:
                     "winner_correct": bool(fin["driver"].iloc[0] == act["driver"].iloc[0]),
                     "median_abs_gap_err_s": float(np.median(np.abs(
                         gaps_s[same_lap] - gaps_a[same_lap]))) if same_lap else np.nan,
-                    "passes_sim": int(sim["passed"].sum()), "passes_actual": n_act,
+                    "passes_drawn": int(sim["passed"].sum()),
+                    "passes_sim": scored_passes(sim), "passes_actual": n_act,
+                    "battle_laps_scored": int(len(bg)),
                     "battle_laps": int(((sim["gap_prev"] < BATTLE_GAP_S) & ~sim["neutral"]
                                          & ~sim["pit"]).sum()),
                 }
@@ -449,26 +537,43 @@ def main(argv: list[str] | None = None) -> int:
     per_race = fin.groupby(["season", "event"]).agg(
         spearman=("spearman", "mean"), pos_err=("mean_abs_pos_err", "mean"),
         winner_correct=("winner_correct", "mean"), gap_err_s=("median_abs_gap_err_s", "median"),
-        passes_sim=("passes_sim", "mean"), passes_actual=("passes_actual", "first"),
-        battle_laps=("battle_laps", "mean"),
+        passes_sim=("passes_sim", "mean"), passes_drawn=("passes_drawn", "mean"),
+        passes_actual=("passes_actual", "first"),
+        battle_laps=("battle_laps_scored", "mean"),
     )
+    bg = pd.concat(bgaps)
+    bg["bin"] = pd.cut(bg["gap"], BATTLE_BINS, right=False, labels=BATTLE_LABELS)
+    per_replay = bg.groupby(["season", "event", "replay", "bin"], observed=True).size()
+    dist = per_replay.groupby("bin", observed=True).mean().rename("sim_per_race")
+    dist = pd.concat([dist, battle_target(battles, n_races)], axis=1)
+    dist["ratio"] = (dist["sim_per_race"] / dist["target"]).round(2)
+    bg.to_parquet(BATTLES_SIM_PATH.with_name(f"{BATTLES_SIM_PATH.stem}{tag}.parquet"),
+                  index=False)
+
     res = {"restart_gap_s": params.restart_gap,
+           "battle_distribution": dist.reset_index().round(3).astype(str).to_dict(
+               orient="records"),
            "following_curve": curve.reset_index().astype(str).to_dict(orient="records"),
-           "following_shape": shape.reset_index().round(3).astype(str).to_dict(orient="records"),
+           "following_shape": shape.reset_index().round(3).astype(str).to_dict(
+               orient="records"),
            "per_race": per_race.reset_index().round(3).astype(str).to_dict(orient="records")}
     VALIDATION_PATH.with_name(f"{VALIDATION_PATH.stem}{tag}.json").write_text(
         json.dumps(res, indent=2), encoding="utf-8")
 
     pd.set_option("display.width", 220)
-    print("\nfollowing curve, simulated (oracle pace) vs Session 3 data target:")
+    print("\nPRIMARY TARGET: battle laps per race by gap bin (out of sample):")
+    print(dist.round(2).to_string())
+    print(f"  total  sim {dist['sim_per_race'].sum():.1f}  "
+          f"actual {dist['target'].sum():.1f}")
+    print("\nSANITY CHECK ONLY (demoted, see module docstring): following curve")
     print(curve.round(3).to_string())
     print("\ndev distribution by bin (shape test, not just the level):")
     print(shape.round(3).to_string())
     print("\nreplay of actual strategies, mean over replays:")
     print(per_race.round(3).to_string())
     print("\nall races:", per_race[["spearman", "pos_err", "winner_correct", "gap_err_s",
-                                    "passes_sim", "passes_actual", "battle_laps"]
-                                   ].mean().round(3).to_dict())
+                                    "passes_sim", "passes_drawn", "passes_actual",
+                                    "battle_laps"]].mean().round(3).to_dict())
     print(f"\nwrote {FOLLOWING_PATH} and {VALIDATION_PATH} (tag {tag!r})")
     return 0
 
