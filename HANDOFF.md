@@ -21,6 +21,7 @@ triggers. Delivered with a pit-wall dashboard and an Arduino "BOX" pit board.
 6. Pit-wall dashboard + README/demo (DONE; Arduino pit board cut, listed as planned work)
 7. Engine following model rework (DONE as a rework; validation still fails, cause now
    identified and split between the engine and the pass model. See Session 7 results.)
+8. free_missing routing, then expand the holdout (NOT STARTED. See Session 8 brief.)
 
 ## Working style
 - Minimal explanation, direct bullets, step-by-step commands
@@ -28,6 +29,46 @@ triggers. Delivered with a pit-wall dashboard and an Arduino "BOX" pit board.
 - Edit files directly; run pytest and ruff yourself, do not ask me to paste output
 - Do not patch symptoms. If a number looks wrong, find the cause before changing code
 - State assumptions before writing code when a formula or model choice is involved
+
+## Method: every real defect so far was found by two measurements disagreeing
+
+Four instances now, none of them found by a test. This is the project's most reliable
+debugging tool and it is worth applying deliberately rather than by luck.
+
+1. 2023 Austria SC pit loss (Session 1). Lap-time subtraction said 84 s; the transit
+   measurement and the physics said about 23 s. Cause: FastF1 starts a new Stint on any pit
+   lane passage, so 19 drive-throughs were counted as stops, while race control said "SAFETY
+   CAR THROUGH THE PIT LANE". Three successive fixes patched the symptom first, one of them a
+   clamp forcing sc_s < green_s, before anyone looked for the cause.
+2. Pit-now plans ignored the stop at pit_lap (Session 5, 035cd85). Found by consistency
+   checks on the break-even table.
+3. The false-call branch dropped the would-be neutralised laps (Session 5, d28803b). SC and
+   VSC "pit anyway" were 7% and 38% for a quantity that should have been the same. Both read
+   38% after the fix.
+4. Inverted pass push-back (Session 7, 506cb2a). Drawn passes 73 against 28 swaps in lap-end
+   order on the same race, for a quantity where the second should never be far below the
+   first.
+
+Two things this buys that a test does not. It catches errors in the measurement as readily as
+in the model, and it does not need to know the right answer in advance, only that two routes
+to the same number must agree. Mechanism tests would not have caught any of the four.
+
+### Corollaries, all three learned the hard way
+- THE DIRECTION A NUMBER MOVES AFTER A FIX IS NO EVIDENCE THE FIX WAS RIGHT. Fixing the
+  inverted push-back made the headline worse, 28 to 72 scored passes against 35.1 actual. It
+  was still correct. Conversely the Session 1 clamp made the pit loss look right and was
+  wrong. Judge a fix on the mechanism, never on whether the number improved.
+- A PLAUSIBLE MECHANISM WILL ABSORB A REAL DEFECT IF YOU LET IT. The push-back bug was about
+  to be written up as a limit of the model class, with a physical story (a static equilibrium
+  cannot represent a car dropping back and taking a run) that fitted the symptom and was
+  false. Session 7 then produced three more inferred claims that the instrumented run
+  contradicted outright. When a tidy explanation arrives before the measurement, treat the
+  tidiness as a warning.
+- WHERE IT FAILS: it needs two independent routes to the same quantity. Session 4's following
+  curve had only one, which is part of why two attempts failed without the cause surfacing.
+  Introducing the battle-lap distribution in Session 7 was partly about restoring a second
+  route. When a quantity has only one measurement, that is a gap in the method, not a sign
+  the quantity is fine.
 
 ## Stack and conventions
 - Python 3.11, fastf1, pandas, pyarrow, numpy, pyyaml, pytest, ruff
@@ -613,16 +654,9 @@ Found by checking scored_passes (swaps in lap-end order, how 35.1 is measured) a
 drawn-pass count the headline had been using. The earlier reported 76.8 per race was drawn
 passes, is not comparable to 35.1, and is withdrawn.
 
-Same pattern as the two Session 5 analysis bugs, and it belongs with them: a plausible
-mechanism was available to absorb a real defect. In Session 5 it was a result too clean to
-believe, then an internal inconsistency. Here a coding error in the pass resolution was about
-to be written up as a limitation of the model class, with a tidy physical story (a static
-equilibrium cannot represent a car dropping back and taking a run) that fitted the symptom
-and was wrong. Note also that fixing the bug made the headline number WORSE, 28 to 72 scored
-passes: the direction of a fix is no evidence about the fix.
-Mechanism tests would not have caught it. What caught it was measuring the same quantity two
-ways and finding they disagreed. That is now the third time in this project that cross-measure
-disagreement, not a unit test, found a real defect.
+This is instance 4 of the cross-measure pattern. See "Method: every real defect so far was
+found by two measurements disagreeing" near the top, which carries the full argument and both
+corollaries; do not re-derive it here.
 
 ### What the engine can and cannot be trusted for (unchanged in substance)
 Trustworthy: pit loss, SC / VSC neutralisation, compound rules on free-air pace.
@@ -735,6 +769,66 @@ README (what a reviewer opens first):
   measured, soft p50 bias, h=30 floor, pass model over-predicts on unseen tracks.
 
 Carries: none of the Session 4 optimizer work exists; do not demo strategy rankings.
+
+## Session 8 brief: free_missing routing, then expand the holdout
+
+### 1. Route cars with no clear-air history to the uncovered branch
+Session 7 Finding 2: the pass model's covered branch was fitted on the easier-passing half of
+the data (covered pairs pass 2.4x more often at 0-0.5 s), and the engine always takes it
+because it always has a pace estimate. Worth 1.46x of the pass miss. This is a defect of
+data/models/pass_model.json that exists independently of the engine, so FIX IT WHETHER OR NOT
+IT HELPS THE ENGINE MISS.
+
+The engine already has what it needs: per (driver, stint), whether any lap so far ran with
+more than traffic.FREE_AIR_GAP_S (3.0 s) of clear air. Cars without it get free_missing = 1
+and free_delta = 0 (what overtake_model.features does with a missing delta).
+
+IDENTIFICATION RISK, STATE IT BEFORE RUNNING. The real coverage flag is not causal.
+traffic.py builds free_pace per (driver, stint) from the clear-air laps of the WHOLE stint, so
+a pair early in a stint that only gets clear air later is "covered" in battles.parquet. The
+engine, running forward, cannot know that. So the engine's causal coverage will come out
+BELOW the real 48 / 44 / 56 / 64% by construction, and an exact match is not the right
+success criterion. Decide before running what the criterion is, and do not tune the clear-air
+threshold or the stint window to close that gap: the gap is the causality difference, not an
+error. If a causal version of the real coverage rate is wanted for comparison, recompute it
+from traffic.py with an expanding window and report both.
+
+Validate on its own terms first, then on the engine:
+- simulated covered / uncovered split per gap bin against the real rates (48 / 44 / 56 / 64%),
+  and against the causal recomputation if built
+- then the battle-lap distribution (133.1 / 148.7 / 98.2 / 69.0 vs 63.2 / 162.5 / 102.3 /
+  87.0) and the pass count (72.0 scored vs 35.1)
+REPORT BOTH EVEN IF THE PASS COUNT BARELY MOVES. The decomposition says the branch is worth
+1.46x and lap counts 1.77x, so a correct fix here cannot close the miss on its own.
+
+Do NOT hunt the 0 to 0.5 bin further without a mechanism to test (user decision, Session 7).
+Finding 1 stays open with the mechanism unidentified.
+
+### 2. Expand the holdout
+The decision path is n = 1: one real neutralisation (2025 US VSC lap 7) across four holdout
+races, so nothing downstream of it is validated. The ingest pipeline already handles wet
+compound exclusion automatically.
+- Add races to config/races.yaml. 2023 to 2025 has far more dry races than the 27 currently
+  there (23 train + 4 holdout).
+- Target a holdout with at least 8 real SC or VSC deployments. CHECK DEPLOYMENT COUNTS FROM
+  THE DATA, not from memory, before fixing the split.
+- Keep the split logic in src/splits.py. Any race already used in a fit STAYS IN TRAIN (phi,
+  pit loss medians, SC rates, tyre models, K, pass model). New races can go either way.
+- TELL THE USER THE PROPOSED SPLIT AND ITS NEUTRALISATION COUNT BEFORE REBUILDING ANYTHING.
+- Then rebuild: ingest, clean, pitloss, safety_car, overtakes. Report whether the Session 1
+  to 3 numbers hold: clean-lap share (was 87.9%), green pit loss (was 22.94 s), fuel K (was
+  3.249 s per race of progress), pass model calibration especially at tracks now seen more
+  than once.
+- Retrain the tyre model and report held-out calibration against Session 2 (11.6% below p10,
+  9.8% above p90). More races and more unseen tracks make this the real generalisation test.
+  IF CALIBRATION DEGRADES THAT IS A FINDING, NOT A REGRESSION TO FIX.
+- Re-run the Session 5 backtest on the larger holdout. Break-even, false-call cost and
+  blind-window counts only mean something at n > 1.
+- Ingest is roughly 1 to 2 minutes per race, so start it early and in the background.
+
+Carries: holdout touches nothing but the backtest; no clamping or post-processing; say so if a
+spec is not identified from the data; stop and report rather than iterating past a second
+attempt; commit and push after each piece.
 
 ## Session 4 brief: race engine, DP optimizer, Monte Carlo
 The biggest build left. Inputs all exist; this session is simulation, not modelling.
