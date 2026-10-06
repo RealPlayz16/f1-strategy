@@ -99,6 +99,7 @@ VALIDATION_PATH = Path("data/processed/engine_validation.json")
 FOLLOWING_PATH = Path("data/processed/engine_following.parquet")
 BATTLES_SIM_PATH = Path("data/processed/engine_battles.parquet")
 PAIRS_SIM_PATH = Path("data/processed/engine_pairs.parquet")
+PASS_OOF_PATH = Path("data/processed/pass_oof.parquet")
 
 SEED = 42
 BATTLE_GAP_S = 2.0
@@ -597,11 +598,23 @@ def main(argv: list[str] | None = None) -> int:
     act["bin"] = pd.cut(act["gap_before_s"], BATTLE_BINS, right=False, labels=BATTLE_LABELS)
     act = act.dropna(subset=["bin"])
     act_rate = act.groupby("bin", observed=True)["passed"].mean().rename("actual_rate")
-    # Actual free-air delta on the covered subset, the only one comparable to the sim
-    # (the sim always knows free-air pace; reality knows it for 52% of battles).
-    cov = act[act["pace_delta_s"].notna()]
-    pop = pop.join(act_rate)
-    pop["enrichment"] = (pop["mean_p"] / pop["actual_rate"]).round(2)
+    # The pass model has a covered branch (free-air pace known) and a missing-flag branch.
+    # The engine is ALWAYS on the covered branch: it always has a pace estimate. Reality is
+    # covered for about half of real battles, and the two populations pass at very different
+    # rates, so the covered rate is reported beside the blended one to size that mismatch.
+    oof = pd.read_parquet(PASS_OOF_PATH)
+    oof = oof[oof["split"] == "train"].copy()
+    oof["bin"] = pd.cut(oof["gap_before_s"], BATTLE_BINS, right=False, labels=BATTLE_LABELS)
+    oof = oof.dropna(subset=["bin"])
+    grp = oof.groupby("bin", observed=True)
+    cov_rate = grp.apply(
+        lambda d: d.loc[d["free_delta"].notna(), "passed"].mean(), include_groups=False
+    ).rename("covered_rate")
+    coverage = grp["free_delta"].apply(lambda x: float(x.notna().mean())).rename("coverage")
+    pop = pop.join(act_rate).join(cov_rate).join(coverage)
+    pop["vs_blend"] = (pop["mean_p"] / pop["actual_rate"]).round(2)
+    pop["vs_covered"] = (pop["mean_p"] / pop["covered_rate"]).round(2)
+    pop["branch_mismatch"] = (pop["covered_rate"] / pop["actual_rate"]).round(2)
     res["pair_population"] = pop.reset_index().round(3).astype(str).to_dict(orient="records")
     pl.to_parquet(PAIRS_SIM_PATH.with_name(f"{PAIRS_SIM_PATH.stem}{tag}.parquet"), index=False)
     VALIDATION_PATH.with_name(f"{VALIDATION_PATH.stem}{tag}.json").write_text(
@@ -610,18 +623,20 @@ def main(argv: list[str] | None = None) -> int:
     pd.set_option("display.width", 220)
     print("\nPAIR POPULATION: simulated battle pairs vs battles.parquet, by gap bin")
     print(pop.round(3).to_string())
-    print(f"  actual covered battles n = {len(cov)}, "
-          f"share of all actual battles {len(cov) / len(act):.2f}; sim is 100% covered")
+    print("  vs_blend splits into branch_mismatch (the engine is always on the covered")
+    print("  branch) times vs_covered (how much the simulated pair population differs).")
     # Decomposition of the pass miss: how much is too many battle laps, and how much is the
     # wrong population within those laps.
     sim_p = (pop["laps_per_race"] * pop["mean_p"]).sum()
     counterfactual = (pop["laps_per_race"] * pop["actual_rate"]).sum()
+    branch = (pop["laps_per_race"] * pop["covered_rate"]).sum()
     act_laps = (act.groupby("bin", observed=True).size() / n_races)
     actual_p = (act_laps * pop["actual_rate"]).sum()
-    print(f"\n  pass decomposition (adjacent pairs, drawn):"
-          f"\n    actual               {actual_p:.1f}"
-          f"\n    sim laps, actual rate {counterfactual:.1f}   (lap-count excess only)"
-          f"\n    sim laps, sim rate    {sim_p:.1f}   (adds population enrichment)")
+    print("\n  pass decomposition (adjacent pairs, drawn):")
+    print(f"    actual                      {actual_p:5.1f}")
+    print(f"    sim laps, blended rate      {counterfactual:5.1f}   too many battle laps")
+    print(f"    sim laps, covered rate      {branch:5.1f}   + always on the covered branch")
+    print(f"    sim laps, sim rate          {sim_p:5.1f}   + simulated pair population")
 
     print("\nPRIMARY TARGET: battle laps per race by gap bin (out of sample):")
     print(dist.round(2).to_string())

@@ -1,5 +1,6 @@
 # HANDOFF: F1 Race Strategy Optimizer (Insane Version)
-All 6 sessions done (Session 4 engine with a documented limitation; no optimizer) | Started
+All 7 sessions done (Session 7 reworked the engine following model; it still fails
+validation, now with an identified cause; no optimizer) | Started
 1:40pm ET Sep 30 | Deadline Oct 1 11:59pm ET
 Environment: Windows 11, PowerShell, venv at .venv, Python 3.11
 
@@ -18,6 +19,8 @@ triggers. Delivered with a pit-wall dashboard and an Arduino "BOX" pit board.
    documented limitation; optimizer and Monte Carlo not built)
 5. Live replay strategy engine + Fast Flag hook + backtest (DONE)
 6. Pit-wall dashboard + README/demo (DONE; Arduino pit board cut, listed as planned work)
+7. Engine following model rework (DONE as a rework; validation still fails, cause now
+   identified and split between the engine and the pass model. See Session 7 results.)
 
 ## Working style
 - Minimal explanation, direct bullets, step-by-step commands
@@ -458,9 +461,182 @@ actual strategies), 20 replays each:
   with real strategies were NOT built.
 - What the engine can still be trusted for: pit loss, SC / VSC neutralisation and compound
   rules on free-air pace. Not for traffic- or overtake-dependent strategy claims.
-- If revisited: a following model where the gap a held car settles at depends on its
-  free-air pace advantage and the dirty air penalty (no fixed floor), validated on the same
-  curve and on passes per race, with the 2-3 s bin as the clean test.
+- REVISITED IN SESSION 7 along exactly these lines (pace rule, no fixed floor). It did not
+  pass. The 2-3 s bin turned out NOT to be a clean test under a pace rule: it is
+  structurally 0.00 and cannot fail. See "Session 7 results" for what replaced it.
+
+## Session 7 results (done): following model reworked, still fails, cause identified
+
+Replaced the position-rule following model with a pace rule. The engine is better and still
+fails the pass count. Two separate defects were found, one in the engine and one in the pass
+model, and one coding bug nearly got attributed to a model limitation. Nothing was tuned.
+
+### The rule (src/engine.py)
+There is no minimum gap anywhere in the engine. For car d with the nearest non-pitting car a
+ahead and gap g at the end of the previous lap:
+
+    unconstrained   L0_d = free pace + lap noise (+ soft bias) + dirty_air_penalty(g, d0)
+    held iff        t_d + L0_d < arrival of a   (would finish ahead of a car it did not pass)
+    held            L_d = L_a + dirty_air_penalty(g, d0)
+
+Held cars end the lap g + aero(g) behind. L_d > L0_d always (held implies L0_d < L_a - g), so
+the rule can only slow a car down; it is not a clamp. A car settles where aero(g*) equals its
+pace in hand; a car with more than d0 in hand has no equilibrium. Trains propagate because
+L_a already carries a's own held time.
+- The held test is on ARRIVAL, not pace, so a slower follower is never held and drops back on
+  its own. No case analysis needed for it.
+- The blocking car is the resolved car with the LATEST arrival, not always the nearest: a car
+  shoved back by a pass still blocks the cars behind it.
+- Pass lap: the passer keeps its own lap time and the passed car pays the swap. ASSUMPTION
+  about who pays, taken in the direction that does not compound the pass model's known 15%
+  over-prediction. PASS_MARGIN_S = 0.1, stated.
+- A car behind a pitting car references the nearest non-pitting car ahead, matching how
+  battles.parquet defines the eligible car directly ahead.
+- SC_RESTART_GAP_S 1.0 -> 0.41, MEASURED: median gap to the car ahead on the last lap of each
+  train SC, 11 events, 173 gaps, per-race medians 0.28 to 0.54. The old 1.0 was a stated
+  constant and was 2.5x the data. Isolation run (--restart-gap 1.0, same seed) moved passes
+  by 8% of the miss and nothing else by more than 1%, so it is not a cause either way; keep
+  the measured value.
+
+### VALIDATION TARGET CHANGED: battle-lap distribution, not the following curve
+The following curve is no longer a test and is DEMOTED to a printed sanity check. Under the
+pace rule an unheld car's dev is exactly dirty_air_penalty(gap), which is zero past 1.0 s by
+construction, so the 1.5-2 and 2-3 bins read about 0.000 and CANNOT FAIL. A near-match there
+is worth nothing. The bins that can still move take d0, the aero shape and free-air pace from
+the same following laps that produce the target, so no part of the curve is out of sample.
+
+The primary target is now the BATTLE-LAP DISTRIBUTION by gap bin: car-laps per race within
+2.0 s of the eligible car directly ahead. Nothing in the following model was fitted to it
+(d0 and the aero shape come from conditional mean lap times, free-air pace from clear-air
+laps, the pass model from pass outcomes), and it is a distribution over four bins rather than
+five conditional means, so it constrains where cars spend their time, which is what drives
+pass counts and traffic cost.
+  Both sides are constructed identically. src/engine.py eligible_sim reproduces
+  overtakes.eligible_pairs on simulated laps: ineligible cars removed from the ordering, lap 1
+  and neutral laps on lap k dropped, in-lap and out-lap dropped, and a lap k-1 under a
+  neutralisation KEPT (overtakes.py flags lap k only), so restart laps count on both sides.
+  passes_sim is now scored as overtakes.py scores it, any swap in lap-end order between
+  eligible cars. passes_drawn is kept beside it; the two differ a lot and only the first is
+  comparable to 35.1.
+
+### Result, 23 train races x 20 replays, oracle pace
+Battle laps per race by gap bin (PRIMARY):
+    bin        sim    actual   ratio
+    0-0.5    133.1      63.2    2.11      <- the one real miss
+    0.5-1    148.7     162.5    0.92
+    1-1.5     98.2     102.3    0.96
+    1.5-2     69.0      87.0    0.79
+    total    448.9     415.0    1.08
+Passes per race: 72.0 scored (82.5 drawn) vs 35.1 actual.
+Finishing order: Spearman 0.951, mean position error 1.17, winner right 67%, median gap error
+12.0 s. Weak test under oracle pace, unchanged in meaning from Session 4.
+Following curve (SANITY ONLY): 0.64 / 0.48 / 0.15 / 0.03 / 0.00 vs 0.80 / 0.33 / 0.21 / 0.14
+/ 0.04. Best of the three attempts and correctly ordered for the first time, but see above:
+it is not evidence.
+
+The distribution is within 10% in two bins and 21% under in one. The entire failure is
+2.11x too many car-laps at 0-0.5 s.
+
+### Pass decomposition, adjacent-pair drawn passes per race
+    actual                       31.3
+    sim laps x blended rate      55.4    too many battle laps at 0-0.5
+    sim laps x covered rate      80.8    + the engine is always on the covered branch
+    sim laps x sim model rate    79.7    + the simulated pair population (slightly negative)
+So the miss is about 1.77x from lap counts and about 1.46x from the pass model branch, and
+the simulated pair population contributes nothing (0.99x). The two causes are independent and
+live in different modules.
+
+### FINDING 1 (engine): 2.11x too many car-laps at minimum gap, MECHANISM NOT IDENTIFIED
+Checked and excluded:
+- SC restart compression. Only 12.5 of 141.1 close laps per race fall within 3 laps of a
+  neutralisation ending (9%). It is a green-flag phenomenon.
+- The restart gap value. The 1.0 s isolation run moved it by under 5%.
+I do not have an identified mechanism for the remaining excess. Do not guess one.
+
+RETRACTED, measured and false. Three claims were inferred mid-session from the actual-side
+data alone and then contradicted by the instrumented sim-side run. They are recorded here so
+they are not re-derived:
+1. "The engine cannot produce close followers with no pace advantage, because the only way to
+   get close is to be faster." FALSE. Simulated 0-0.5 pairs are 45.8% not-faster against
+   24.4% in the actual covered population, and the simulated median free-air delta there is
+   0.063 s against 0.616 s. The engine produces MORE slow close followers than reality,
+   because the held rule propagates down trains.
+2. "The 1 to 2 s band is unpopulated because aero(g) is zero past 1.0 s." FALSE. 0.5-1 is at
+   0.92x and 1-1.5 at 0.96x of actual. Only 1.5-2 is meaningfully under, at 0.79x.
+3. "The two absences are one defect, a single fixed point per pace delta, and therefore a
+   limit of the model class." WITHDRAWN. Both absences were measured and neither exists.
+   There may still be a model-class limit here, but this evidence does not show one and the
+   oscillation story is not supported by anything measured.
+
+### FINDING 2 (pass model, independent of the engine): the covered branch is a selection
+overtake_model.py has a covered branch (free-air pace delta known) and a missing-flag branch.
+Session 3 recorded that uncovered pairs are "skewed to stuck pairs" but never sized it.
+Train battles, by gap bin:
+    bin      blended  covered  uncovered  coverage  covered/blend
+    0-0.5      0.318    0.454      0.191     0.482          1.43
+    0.5-1      0.059    0.095      0.031     0.441          1.60
+    1-1.5      0.011    0.016      0.004     0.555          1.51
+    1.5-2      0.006    0.007      0.003     0.644          1.27
+Coverage is SELECTION, not data availability. Uncovered pairs have lower observed pace delta
+in every bin (0-0.5: median 0.057 vs 0.215) and longer battles in three of four (1.5-2: mean
+4.81 vs 3.67 laps), and no tyre-age advantage where covered pairs at 0-0.5 have three laps of
+fresher rubber. Caveat that strengthens it: pace_delta_s is itself dirty-air censored and the
+censoring is worst for uncovered pairs, so the measured separation is a LOWER BOUND.
+
+Consequence: the covered branch was fitted on the easier-passing half of the data, and every
+consumer that always has a pace estimate always takes it. That is the engine, the optimizer
+and the live decision path. It is a defect of data/models/pass_model.json, not of
+src/engine.py, and it stacks on the two over-predictions already on record (15% overall,
+about 70% at unseen tracks).
+
+WHY THE TARGET WAS NOT MOVED TO THE COVERED RATE. It was considered and rejected. The engine
+simulates whole races, every adjacent pair, so the correct answer for a race is the census
+count, 31.3 adjacent-pair passes / 35.1 scored swaps. Comparing a whole-race simulator to the
+rate of an easier-passing subpopulation would redefine the target to match a known bias. The
+covered rate is reported as a decomposition term only.
+
+IDENTIFIED FIX, NOT BUILT: the engine already knows whether a car has had more than
+FREE_AIR_GAP_S of clear air in its current stint, so it could set free_missing = 1 for cars
+that have not and route them to the branch reality would have put them in. That is a new
+variant and needs its own validation. It is the single most promising next step on the pass
+count, because it addresses the 1.46x term directly and is derived rather than tuned.
+
+### BUG: inverted pass push-back, and the pattern it repeats
+    if d in passes and arr[a] > arr[d] - PASS_MARGIN_S:    # wrong
+When the passed car was comfortably ahead (arr[a] much less than arr[d]) the test was false,
+so it was never pushed back and the drawn pass never happened. Only draws where the pair was
+already nearly level resolved into a swap. On 2023 Bahrain, 73 drawn passes produced 28 swaps
+in lap-end order. Fast cars also stayed stuck behind cars they had nominally passed, which
+inflated occupancy at minimum gap.
+
+Found by checking scored_passes (swaps in lap-end order, how 35.1 is measured) against the
+drawn-pass count the headline had been using. The earlier reported 76.8 per race was drawn
+passes, is not comparable to 35.1, and is withdrawn.
+
+Same pattern as the two Session 5 analysis bugs, and it belongs with them: a plausible
+mechanism was available to absorb a real defect. In Session 5 it was a result too clean to
+believe, then an internal inconsistency. Here a coding error in the pass resolution was about
+to be written up as a limitation of the model class, with a tidy physical story (a static
+equilibrium cannot represent a car dropping back and taking a run) that fitted the symptom
+and was wrong. Note also that fixing the bug made the headline number WORSE, 28 to 72 scored
+passes: the direction of a fix is no evidence about the fix.
+Mechanism tests would not have caught it. What caught it was measuring the same quantity two
+ways and finding they disagreed. That is now the third time in this project that cross-measure
+disagreement, not a unit test, found a real defect.
+
+### What the engine can and cannot be trusted for (unchanged in substance)
+Trustworthy: pit loss, SC / VSC neutralisation, compound rules on free-air pace.
+NOT trustworthy: traffic-dependent or overtake-dependent strategy claims. Passes are
+over-predicted about 2.05x on scored swaps and car-laps at minimum gap 2.11x. Undercut and
+overcut modelling, traffic cost on pit exit and track-position-dependent claims remain
+BLOCKED. The optimizer, the joint Monte Carlo and the comparison with real strategies were
+not built in Session 4 and were not built here either.
+
+### Artefacts
+engine_validation.json, engine_following.parquet, engine_battles.parquet (per-replay battle
+gaps), engine_pairs.parquet (per-pair gap, free-air delta, predicted p, eligibility).
+Suffixed _restart1 for the isolation run. python -m src.engine [--restart-gap X].
+About 20 minutes for 23 races x 20 replays.
 
 ## Session 5 results (done): live Fast Flag decision system
 FRAMING (use these words): a working live decision system, demonstrated end to end, with
