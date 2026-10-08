@@ -23,7 +23,7 @@ def test_split_sizes_match_the_session_8_split():
     splits = load_splits()
     holdout = {k for k, v in splits.items() if v == "holdout"}
     train = {k for k, v in splits.items() if v == "train"}
-    assert (len(train), len(holdout)) == (30, 9)
+    assert (len(train), len(holdout)) == (29, 9)
 
 
 def test_split_of_unknown_race_raises():

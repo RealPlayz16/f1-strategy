@@ -100,6 +100,28 @@ def flag_outliers(df: pd.DataFrame) -> pd.Series:
     )
 
 
+# A drying track looks dry to the compound test and is not dry to any lap-time model. The
+# field's median clean lap starts far slower than its late-race baseline and falls as the
+# track dries, which no measured mechanism here can produce: the whole-race progress effect K
+# is about 3.2 s (src/fuel.py) and the early-stint effect at most 0.7 s (src/degradation.py),
+# under 4 s together. Measured across the 39 other ingested races the excess is median 2.08 s
+# and at most 3.52 s (2025 Qatar), with the largest single-lap step down 2.52 s. 2025 Belgian
+# sits at 16.04 s with a 10.76 s step, after a wet delay, and never shows an INTERMEDIATE in
+# its recorded laps so the wet-compound exclusion misses it. The threshold is 6.0 s: well
+# above anything the measured mechanisms allow and above twice the largest clean-race value,
+# and far below the case it is built to catch.
+DRYING_EXCESS_S = 6.0
+
+
+def early_lap_excess_s(df: pd.DataFrame) -> float:
+    """How much slower the field's median clean lap starts than its late-race baseline."""
+    f = df[df["is_clean"]].groupby("lap")["lap_time_s"].median().sort_index()
+    if len(f) < 10:
+        return 0.0
+    baseline = f.tail(max(5, len(f) // 4)).median()
+    return float(f.head(max(3, len(f) // 5)).median() - baseline)
+
+
 def clean_race(race_path: Path) -> pd.DataFrame:
     laps = pd.read_parquet(race_path / "laps.parquet")
     weather = pd.read_parquet(race_path / "weather.parquet")
@@ -191,9 +213,14 @@ def build(split: str | None = None) -> pd.DataFrame:
         if split and split_of(season, event, splits) != split:
             continue
         print(f"cleaning {race_path.name} ...", flush=True)
-        frames.append(clean_race(race_path))
+        one = clean_race(race_path)
+        excess = early_lap_excess_s(one)
+        if excess > DRYING_EXCESS_S:
+            skipped.append(f"{season} {event} (drying track, early excess {excess:.1f} s)")
+            continue
+        frames.append(one)
     if skipped:
-        print(f"skipped {len(skipped)} raw dir(s) not in config/races.yaml: "
+        print(f"skipped {len(skipped)} race(s): "
               f"{', '.join(skipped)}", flush=True)
     if not frames:
         raise SystemExit("no races found, run python -m src.ingest first")
