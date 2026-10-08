@@ -20,6 +20,14 @@ RAW_DIR = Path("data/processed/raw")
 CACHE_DIR = Path("data/cache")
 CONFIG = Path("config/races.yaml")
 WET_COMPOUNDS = {"INTERMEDIATE", "WET"}
+# A race is excluded when FastF1's tyre bookkeeping restarted mid-race: a driver whose
+# first lap carrying tyre data shows an age LOWER than the laps it has already completed,
+# with no pit lane passage before it. Then tyre_life is not missing, it is WRONG, and
+# every downstream age-based model would be fed understated ages silently. Found on 2025
+# Miami, where laps 1-24 carry no compound, tyre_life or stint at all and the counter
+# restarts at lap 24-25: 15 of 20 drivers show the reset. Checked across all 40 ingested
+# races; Miami is the only one. One affected driver is enough to distrust the session's
+# tyre feed, so the threshold is 1.
 
 fastf1.set_log_level("WARNING")
 
@@ -44,6 +52,27 @@ def load_config(path: Path = CONFIG) -> dict:
 
 def race_dir(season: int, rnd: int, event: str) -> Path:
     return RAW_DIR / f"{season}_{rnd:02d}_{slugify(event)}"
+
+
+def tyre_counter_resets(laps) -> int:
+    """Drivers whose tyre age is provably wrong because FastF1's counter restarted mid-race.
+
+    For each driver, take the first lap that carries TyreLife. If the driver had no pit lane
+    passage before it, its tyre must be at least that many laps old, so a smaller TyreLife
+    means the counter restarted where the data resumed. Returns how many drivers show it.
+    """
+    n = 0
+    for _, g in laps.groupby("Driver"):
+        g = g.sort_values("LapNumber")
+        t = g[g["TyreLife"].notna()]
+        if t.empty:
+            continue
+        first_lap = float(t["LapNumber"].iloc[0])
+        age = float(t["TyreLife"].iloc[0])
+        pitted_before = g.loc[g["LapNumber"] < first_lap, "PitInTime"].notna().any()
+        if not pitted_before and age < first_lap - 1:
+            n += 1
+    return n
 
 
 def ingest_race(season: int, event: str, split: str, force: bool = False) -> dict:
@@ -86,6 +115,12 @@ def ingest_race(season: int, event: str, split: str, force: bool = False) -> dic
     if compounds & WET_COMPOUNDS:
         row["status"] = "excluded"
         row["reason"] = f"wet compounds: {sorted(compounds & WET_COMPOUNDS)}"
+        return row
+
+    reset = tyre_counter_resets(laps)
+    if reset:
+        row["status"] = "excluded"
+        row["reason"] = f"tyre counter restarted mid-race for {reset} driver(s)"
         return row
 
     out = race_dir(season, rnd, event_name)

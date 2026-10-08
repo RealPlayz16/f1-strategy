@@ -7,7 +7,7 @@
 # Odd round -> train, even round -> holdout, EXCEPT Fast Flag training races, which are
 # forced to train by the rule that moved 2025 Dutch in Session 1.
 # Fast Flag check races stay parity-eligible; see the conditional rule in HANDOFF.md.
-# Result: train 31, holdout 9 with 6 SC/VSC deployments.
+# Result: train 30, holdout 9 with 6 SC/VSC deployments (2025 Miami excluded, see below).
 train:
   - {season: 2023, event: "Bahrain"}
   - {season: 2023, event: "Saudi Arabian"}
@@ -34,7 +34,8 @@ train:
   - {season: 2025, event: "Dutch"}
   # Session 8 additions
   - {season: 2025, event: "Saudi Arabian"}  # Fast Flag CHECK race
-  - {season: 2025, event: "Miami"}  # Fast Flag TRAINING race, forced
+  # 2025 Miami EXCLUDED: FastF1 tyre counter restarts mid-race, 15 of 20 drivers.
+  # Not missing data, wrong data. See ingest.tyre_counter_resets.
   - {season: 2025, event: "Emilia Romagna"}  # Fast Flag CHECK race
   - {season: 2025, event: "Austrian"}
   - {season: 2025, event: "Belgian"}  # Fast Flag TRAINING race, forced

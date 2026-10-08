@@ -154,6 +154,11 @@ def clean_race(race_path: Path) -> pd.DataFrame:
         & ~df["is_deleted"]
         & df["is_accurate"]
         & ~df["is_outlier"]
+        # Every downstream model keys on compound and tyre age, so a lap carrying neither
+        # cannot be a clean lap. No race in the original 27 had one, which is why this was
+        # missing; 2025 Miami has 446 such laps and 379 of them were passing as clean.
+        & df["compound"].notna()
+        & df["tyre_life"].notna()
     )
 
     df["laps_remaining"] = int(meta["race_laps"]) - df["lap"]
