@@ -101,7 +101,7 @@ def false_call_section(dec: pd.DataFrame, races: list[dict]) -> list[str]:
         out.append("No false calls in the built holdout races, so no realised false-call "
                    "cost; the break-even table above is the general answer.")
         return out + [""]
-    d = dec[(dec["source"] == "call") & (dec["soft_bias_s"] == 0)]
+    d = dec[(dec["source"] == "call") & (dec["p50_bias_s"] == 0)]
     for _, e in false_eps.iterrows():
         g = d[(d["race"] == e["race"]) & (d["tag"] == str(e["episode"]))]
         decided = g[~g["decision"].astype(str).str.startswith(("no ", "race"))]
@@ -130,7 +130,7 @@ def real_event_section(dec: pd.DataFrame, races: list[dict]) -> list[str]:
     if clock:
         out.append(f"- Clock check: Fast Flag's official {clock[0]['kind']} vs our "
                    f"sc_events differ by {clock[0]['diff_s']:.2f} s.")
-    d = dec[(dec["race"] == "2025_United_States") & (dec["soft_bias_s"] == 0)]
+    d = dec[(dec["race"] == "2025_United_States") & (dec["p50_bias_s"] == 0)]
     at_call = d[d["source"] == "call"]["decision"].value_counts().to_dict()
     at_dep = d[d["source"] == "deploy"]["decision"].value_counts().to_dict()
     out.append(f"- Decisions at the call: {at_call}. The call came at the end of lap 5; the "
@@ -146,14 +146,16 @@ def real_event_section(dec: pd.DataFrame, races: list[dict]) -> list[str]:
                   "pit_now_plan", "stay_out_plan"]].sort_values("driver")
         out += ["", md_table(tab.round(3)), ""]
         soft = dec[(dec["race"] == "2025_United_States") & (dec["source"] == "deploy")
-                   & (dec["soft_bias_s"] > 0)]
+                   & (dec["p50_bias_s"] > 0)]
         flips = 0
         for drv, g in dd.groupby("driver"):
             s = soft[soft["driver"] == drv]
             if len(s) and (s["p_pit_better_rho0.5"].iloc[0] >= 0.5) != (
                     g["p_pit_better_rho0.5"].iloc[0] >= 0.5):
                 flips += 1
-        out.append(f"- Soft p50 + 0.075 s sensitivity: {flips} of {len(dd)} cars change side "
+        out.append(f"- Long-horizon p50 + 0.09 s on MEDIUM and SOFT beyond h = 15 "
+                   f"(Session 8 spec, replaces the dead soft + 0.075): "
+                   f"{flips} of {len(dd)} cars change side "
                    "of P = 0.5 at rho 0.5.")
         out.append(f"- Share of plan laps beyond h = 30 (tyre intervals a floor there): "
                    f"{dd['share_laps_h_gt_30'].median():.0%}. The probabilities above are "

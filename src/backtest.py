@@ -38,6 +38,7 @@ import pandas as pd
 
 from src.live import (
     LAPS_PATH,
+    P50_BIAS_LONG_H_S,
     PHI,
     PITLOSS_PATH,
     REACTION_S,
@@ -101,7 +102,7 @@ def team_pitted(laps: pd.DataFrame, driver: str, t0: float, t1: float) -> bool:
 
 def summarise(dec: dict) -> dict:
     keys = ["driver", "t", "kind", "decision", "pit_lap", "compound_now", "tyre_age_at_pit",
-            "share_laps_h_gt_15", "share_laps_h_gt_30", "soft_bias_s"]
+            "share_laps_h_gt_15", "share_laps_h_gt_30", "p50_bias_s"]
     row = {k: dec.get(k) for k in keys}
     for rho, r in dec.get("by_rho", {}).items():
         row[f"p_pit_better_rho{rho}"] = r["p_pit_better"]
@@ -139,8 +140,8 @@ def run_race(rid: str, laps: pd.DataFrame, sc: pd.DataFrame, pitloss_tab: pd.Dat
         state = driver.at(t)
         running = state.laps.groupby("driver")["lap"].max()
         for drv in running.index:
-            for bias in (0.0, 0.075):
-                dec = decide(state, drv, r, kind, p_real, pitloss, race_laps, soft_bias=bias)
+            for bias in (0.0, P50_BIAS_LONG_H_S):
+                dec = decide(state, drv, r, kind, p_real, pitloss, race_laps, p50_bias_s=bias)
                 rows.append({**summarise(dec), "race": rid, "source": source, "tag": str(tag),
                              "kind_called": kind})
 

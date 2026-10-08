@@ -168,6 +168,39 @@ STILL UNVERIFIED: ~/fast-flag/data/features/ holds only 3 of the 20 training rac
 metadata rather than from the data. If a race list changes upstream, ours goes stale silently.
 Re-check both files before trusting any holdout race for real-call work.
 
+## Gates do not get written until data breaks them
+
+Expanding the race set from 27 to 40 candidates turned up THREE data defects in the 13 new
+races, and found more bad data than bad code. The original 27 had none of them, which is
+precisely why no gate existed for any of them. Two were invisible to every check the project
+had, and in both cases the cheap fix would have buried the corruption and left the pipeline
+green.
+
+1. CORRUPT TYRE AGES THAT LOOK LIKE MISSING DATA (2025 Miami). No compound, tyre_life or
+   stint for laps 1-24, for 19 of 20 cars. The trap is that where the feed resumes the counter
+   RESTARTS: 15 of 20 drivers show an age below the laps they had already run with no stop
+   before it. The obvious fix, drop the NaN laps, would have kept 559 laps whose ages are
+   understated by up to 24 and fed them to every age-based model silently. Surfaced only as
+   "SVD did not converge" deep inside a least-squares call.
+2. A WET RACE WITH NO INTERMEDIATES RECORDED (2025 Belgian). The wet exclusion tests
+   compounds, and a drying track after a wet delay never shows one: the field runs slicks on a
+   damp track. It looks dry to a compound test and is not dry to any lap-time model, 122.8 s
+   at lap 5 against 107.9 s by lap 22. The cheap fix, add it to fuel.py's FIT_EXCLUDE beside
+   2024 Saudi, would have left it corrupting degradation and the tyre model.
+3. STALE RAW DIRECTORIES (self-inflicted). Screening candidates through a throwaway config
+   wrote into the real data/processed/raw/.
+
+What the three have in common: each was caught by something refusing to proceed, not by a
+test. A crash in fuel.py, fuel.py's own output gate, and a KeyError in split_of. None of the
+56 tests failed at any point. That is the same pattern as "## Method: every real defect so far
+was found by two measurements disagreeing", in its other form: a component that refuses rather
+than guesses turns silent corruption into a loud stop. fuel.py's gate had looked like
+belt-and-braces for two sessions and earned its place here.
+
+The lesson for the next expansion: new data is where the gaps are, the existing gates encode
+only the defects the existing data happened to contain, and a fix that makes the symptom go
+away without explaining it is how corruption gets in.
+
 ## Stack and conventions
 - Python 3.11, fastf1, pandas, pyarrow, numpy, pyyaml, pytest, ruff
 - Later sessions: scikit-learn, lightgbm, torch, fastapi, uvicorn
@@ -445,6 +478,9 @@ looks fine (soft 13.1 / 9.5%) because the intervals widened, and per-race offset
 soft is 0.41 s vs 0.19-0.20. Consequence: the optimizer, which runs on p50, will favour
 soft strategies by about 0.075 s per soft lap (about 1.1 s over a 15-lap stint). Session 4
 must check soft-strategy choices against this, e.g. a sensitivity run with soft p50 + 0.075.
+SUPERSEDED IN SESSION 8, kept as the record of what 23 races showed. On 29 races the soft
+median residual is +0.022, so most of this was small sample. The live bias is horizon shaped:
+h = 30 MEDIUM +0.087, SOFT +0.091, HARD -0.020. Use src/live.py P50_BIAS_LONG_H_S.
 
 History of the fix: fixed laps 5-10 reference 26.9 / 21.5%; re-anchored single net
 22.2 / 14.3% (net p50 biased 0.036 to 0.104 s slow, growing with h); two-stage 11.6 / 9.8%.
@@ -503,7 +539,10 @@ variable was larger than the effect three times):
 
 Carry forward to Session 4:
 - PHI validation against observed position loss (see above).
-- Soft p50 bias +0.075 s (see the tyre model section).
+- DEAD, do not use: soft p50 bias +0.075 s. Session 8 on 29 races puts the soft median
+  residual at +0.022. The live bias is HORIZON shaped: at h = 30, MEDIUM +0.087 and
+  SOFT +0.091, HARD -0.020. Spec and code: src/live.py P50_BIAS_LONG_H_S = 0.09 applied
+  to MEDIUM and SOFT beyond h = 15.
 - Interval width flattening between h=15 and h=30.
 - predict_laptime is horizon dependent and needs anchors (interface change above).
 
@@ -558,7 +597,8 @@ train stints; a floor), optional race tyre limit. Article numbers unverified.
 A DP optimizer searches for the strategy that maximises the modelled outcome, so it
 systematically selects the strategies our known biases flatter. These do not average out;
 the optimizer actively steers toward them:
-- softs: tyre model soft p50 understated by 0.075 s/lap
+- long stints on the softer compounds: tyre p50 runs about 0.09 s slow on MEDIUM and
+  SOFT beyond h = 15 and not on HARD (Session 8). The flat soft 0.075 is dead.
 - overtake-dependent strategies: pass model 15% high overall, about 70% high at unseen
   tracks (15.2% vs 8.9%), top bucket 0.75 vs 0.64
 - long stints: h = 30 tyre intervals are a floor (survivorship)
@@ -566,8 +606,8 @@ Checks:
 - On train races compare the optimizer's choice with what teams ran (stops, compounds,
   passes needed). Report it whatever it shows. Differences also contain team constraints
   we do not model (tyre-set availability above all), so also run it with the bias knobs
-  neutralised (soft +0.075, pass probabilities scaled down): the part of the gap that
-  closes is attributable to our bias.
+  neutralised (p50 + 0.09 on MEDIUM and SOFT beyond h = 15, pass probabilities scaled down):
+  the part of the gap that closes is attributable to our bias.
 - Tyre model predictions for a train race come from the CV fold model that did not see it,
   so the bias is present as in deployment.
 - Joint (not one-at-a-time) Monte Carlo sweep over phi, D0, soft bias and pass scaling;
@@ -985,10 +1025,18 @@ it had more than five races. There is no drift. Stop watching it.
 ### Tyre model: calibration IMPROVED on a larger, more varied train set
 10.7% below p10 and 10.2% above p90, against 11.6 / 9.8 on 23 races. Better at every horizon,
 h=1 10.1/9.3 and h=30 11.7/10.9 (was 13.1/10.5). Width, MAE and race offset sd are flat.
-  READ THIS CAREFULLY: it is GroupKFold over the 29 TRAIN races, not the 9 holdout races.
-  src/tyre.py never loads the holdout (it prints "holdout rows: 0") and that is correct, the
-  holdout touches nothing but the backtest. The generalisation gain is that the folds now
-  leave out more distinct tracks, not that the holdout was scored.
+  CORRECTION, and it was the stated reason for doing this work. The Session 8 brief said the
+  number that tests something is "tyre calibration on 9 holdout races instead of 4". THAT IS
+  NOT WHAT THIS IS and it is not what the expansion produced. src/tyre.py never loads the
+  holdout at all: it prints "holdout rows: 0", and that is correct, because the holdout
+  touches nothing but the backtest. 10.7 / 10.2 is GroupKFold over the 29 TRAIN races. The
+  improvement is real and it is a different improvement: the folds now leave out more
+  distinct tracks, so the held-out-fold population is harder than it was on 23 races.
+  REMAINING GAP: the tyre model has never been scored on the holdout, on 4 races or on 9.
+  Nothing in Sessions 1 to 8 measures its error on a race no fit has seen. Closing that means
+  deciding whether scoring the tyre model on the holdout is allowed under "holdout touches
+  nothing but the backtest"; evaluation is not fitting, but the rule has been read strictly
+  so far and should not be loosened silently.
 
 SOFT BIAS LARGELY GONE, AND REPLACED BY A HORIZON BIAS. Soft p50 median residual is +0.022 s,
 against +0.075 recorded in Session 2, with MEDIUM +0.007 and HARD +0.008. The Session 2 soft
@@ -1134,8 +1182,8 @@ Validation, before any strategy claim:
   seconds (see "Session 4 task" above).
 
 Carries, each a required check:
-- Soft p50 + 0.075 s sensitivity: soft p50 is too fast by about 0.075 s at every horizon.
-  Re-run soft-strategy recommendations with soft p50 + 0.075 and report whether they flip.
+- SUPERSEDED IN SESSION 8. Was: soft p50 + 0.075 s at every horizon. Now: p50 + 0.09 s on
+  MEDIUM and SOFT beyond h = 15, nothing on HARD. Re-run and report whether choices flip.
 - h = 30 tyre intervals are a floor, not an estimate: survivorship (only laps still clean
   30 laps later are in that bucket). Do not read long-horizon width as the true uncertainty.
 - Pass model over-predicts on unseen tracks (15.2% vs 8.9%) and in its top bucket (0.75 vs

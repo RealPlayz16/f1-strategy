@@ -55,6 +55,17 @@ PITLOSS_PATH = Path("data/processed/pitloss_by_track.parquet")
 FF_SCORECARD = FAST_FLAG_DIR / "docs/charts/escalation_check_ours.csv"
 
 SEED = 42
+# TYRE p50 BIAS SENSITIVITY (Session 8). The Session 2 "soft p50 too fast by 0.075 s at every
+# horizon" is DEAD: on 29 train races the soft median residual is +0.022 s. What survives is
+# HORIZON shaped, not compound shaped, and it spares HARD:
+#     h=30   HARD -0.020   MEDIUM +0.087   SOFT +0.091
+#     h=15   HARD +0.013   MEDIUM +0.009   SOFT +0.037
+# So the sensitivity adds P50_BIAS_LONG_H_S to MEDIUM and SOFT laps beyond P50_BIAS_MIN_H
+# laps ahead, and nothing to HARD or to short horizons. One magnitude and one threshold, both
+# stated, both read off that table. Do not reintroduce a flat soft bias.
+P50_BIAS_LONG_H_S = 0.09
+P50_BIAS_MIN_H = 15
+P50_BIAS_COMPOUNDS = ("MEDIUM", "SOFT")
 PHI = 0.08
 PHI_RANGE = (0.05, 0.12)
 RHOS = (0.0, 0.5, 0.9)
@@ -238,15 +249,15 @@ def candidate_plans(compound_now: str, age_now: float, used: set[str], pit_lap: 
 
 
 def decide(state: RaceState, driver: str, laps_all_cols: pd.DataFrame, kind: str,
-           p_real: dict, pitloss: dict, race_laps: int, soft_bias: float = 0.0,
+           p_real: dict, pitloss: dict, race_laps: int, p50_bias_s: float = 0.0,
            rng: np.random.Generator | None = None) -> dict:
     """Pit-now vs stay-out for one car at state.t. Returns a self-describing result."""
     rng = rng or np.random.default_rng(SEED)
     mine = state.laps[state.laps["driver"] == driver].sort_values("lap")
-    # soft_bias_s belongs on every return path, including the early ones: a row that records
+    # p50_bias_s belongs on every return path, including the early ones: a row that records
     # "no decision" is still a row of that sensitivity run, and dropping the field makes the
     # undecided cars vanish from any filter on it.
-    out = {"driver": driver, "t": state.t, "kind": kind, "soft_bias_s": soft_bias,
+    out = {"driver": driver, "t": state.t, "kind": kind, "p50_bias_s": p50_bias_s,
            "accounts_for": ACCOUNTS_FOR, "does_not_account_for": NOT_ACCOUNTED,
            "pit_loss_source": pitloss["source"]}
     if mine.empty:
@@ -292,8 +303,10 @@ def decide(state: RaceState, driver: str, laps_all_cols: pd.DataFrame, kind: str
     # is real. The real-call branch drops them; the false-call branch scores every lap.
     rows["neutral"] = rows["lap"].isin(neutral_laps)
     p10, p50, p90 = predict_laptime(rows)
-    soft = (rows["compound_f"] == "SOFT").to_numpy() * soft_bias
-    rows["q10"], rows["q50"], rows["q90"] = p10 + soft, p50 + soft, p90 + soft
+    # Horizon shaped, not compound shaped: see P50_BIAS_LONG_H_S.
+    bias = (rows["compound_f"].isin(P50_BIAS_COMPOUNDS).to_numpy()
+            & (rows["h"].to_numpy() > P50_BIAS_MIN_H)) * p50_bias_s
+    rows["q10"], rows["q50"], rows["q90"] = p10 + bias, p50 + bias, p90 + bias
     scored = {}
     for pid, g in rows.groupby("plan"):
         family, _, stops = meta[pid]
@@ -361,7 +374,7 @@ def decide(state: RaceState, driver: str, laps_all_cols: pd.DataFrame, kind: str
         "pit_now_plan": pn["stops"], "stay_out_plan": so["stops"],
         "by_rho": results, "break_even": break_even,
         "share_laps_h_gt_15": float((h_all > 15).mean()),
-        "share_laps_h_gt_30": float((h_all > 30).mean()), "soft_bias_s": soft_bias,
+        "share_laps_h_gt_30": float((h_all > 30).mean()), "p50_bias_s": p50_bias_s,
     }
 
 

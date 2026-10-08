@@ -1,10 +1,12 @@
 """Lap-by-lap 20-car race engine.
 
 GOVERNING RISK (Session 4): the optimizer built on this engine searches for the strategy that
-maximises the modelled outcome, so it selects for our known biases: softs (tyre model soft
-p50 understated by 0.075 s/lap), overtake-dependent strategies (pass model 15% high overall,
-about 70% high at unseen tracks) and long stints (h = 30 tyre intervals are a floor). These
-do not average out. Every strategy claim must survive the joint bias sweep and the
+maximises the modelled outcome, so it selects for our known biases: long stints on the
+softer compounds (Session 8: tyre p50 runs about 0.09 s slow on MEDIUM and SOFT beyond h = 15
+and not on HARD; the old flat soft 0.075 is dead, see src/live.py P50_BIAS_LONG_H_S),
+overtake-dependent strategies (pass model 21% high overall, about 70% high at unseen tracks)
+and long stints generally (h = 30 tyre intervals are a floor). These do not average out.
+Every strategy claim must survive the joint bias sweep and the
 comparison with what teams actually ran (see HANDOFF.md).
 
 FOLLOWING MODEL (Session 7). What holds a car back is a pace constraint, not a position, so
@@ -127,6 +129,9 @@ N_REPLAYS = 20
 class Params:
     phi: float = 0.08
     d0: float = DIRTY_AIR_D0_S
+    # Compound shaped, which Session 8 showed is the WRONG AXIS: the live bias is
+    # horizon shaped. Kept only so existing sweeps still run; a correct sweep needs the
+    # h > 15 MEDIUM/SOFT form in src/live.py. Never used in the validation replay (0.0).
     soft_bias: float = 0.0
     pass_scale: float = 1.0
     restart_gap: float = SC_RESTART_GAP_S

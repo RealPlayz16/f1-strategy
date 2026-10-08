@@ -70,9 +70,9 @@ def test_undecided_rows_still_carry_the_sensitivity_field():
                       recs=pd.DataFrame(), neutral=pd.DataFrame())
     pitloss = {"green": 22.0, "sc": 18.0, "vsc": 19.0, "delta_lap_sc": 40.0,
                "delta_lap_vsc": 30.0, "source": "test"}
-    dec = decide(state, "VER", pd.DataFrame(), "SC", {"p": 0.5}, pitloss, 56, soft_bias=0.075)
+    dec = decide(state, "VER", pd.DataFrame(), "SC", {"p": 0.5}, pitloss, 56, p50_bias_s=0.09)
     assert dec["decision"] == "no data"
-    assert dec["soft_bias_s"] == 0.075
+    assert dec["p50_bias_s"] == 0.09
 
 
 def test_quantile_sum_comonotonic():

@@ -154,9 +154,11 @@ model cannot separate the two plans", and the system reports that rather than pi
 - **Pit loss under a Safety Car is a stated assumption** (phi = 0.08, swept 0.05 to 0.12).
   It is not identifiable from lap times with this data: on laps where a Safety Car starts or
   ends, stay-out lap times spread 22 to 31 s with running position.
-- **Tyre model:** calibrated on held-out races (11.6% below p10, 9.8% above p90), but soft
-  p50 is about 0.075 s/lap too fast, and intervals beyond 30 laps ahead are a floor.
-- **Pass model** over-predicts on tracks it has not seen (15.2% vs 8.9%).
+- **Tyre model:** calibrated on held-out races (10.7% below p10, 10.2% above p90), but p50
+  runs about 0.09 s/lap slow on MEDIUM and SOFT more than 15 laps ahead, and intervals beyond
+  30 laps ahead are a floor. Those held-out races are folds of the *training* set; the model
+  has never been scored on the holdout.
+- **Pass model** over-predicts on tracks it has not seen (13.4% vs 7.7%), and 21% overall.
 - **One real neutralisation** on the decision path. See the scope section above.
 - **Arduino "BOX" pit board:** planned, not built. The serial path would be a one-line
   message to an Uno, separate from Fast Flag's own protocol.

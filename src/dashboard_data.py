@@ -63,8 +63,8 @@ def order_by_lap(r: pd.DataFrame) -> list[dict]:
 def decision_cards(dec: pd.DataFrame) -> list[dict]:
     """One card per driver: the baseline decision plus the soft-bias sensitivity."""
     cards = []
-    base = dec[dec["soft_bias_s"] == 0]
-    soft = dec[dec["soft_bias_s"] > 0].set_index("driver")
+    base = dec[dec["p50_bias_s"] == 0]
+    soft = dec[dec["p50_bias_s"] > 0].set_index("driver")
     for _, row in base.sort_values("driver").iterrows():
         card = {
             "driver": str(row["driver"]),
@@ -84,7 +84,7 @@ def decision_cards(dec: pd.DataFrame) -> list[dict]:
             card["gain_if_false"] = round(float(row["gain_if_false_p50_rho0.5"]), 2)
             if row["driver"] in soft.index:
                 s = soft.loc[row["driver"]]
-                card["p_soft_bias"] = {rho: round(float(s[f"p_pit_better_rho{rho}"]), 3)
+                card["p_p50_bias"] = {rho: round(float(s[f"p_pit_better_rho{rho}"]), 3)
                                        for rho in RHOS}
         cards.append(card)
     return cards

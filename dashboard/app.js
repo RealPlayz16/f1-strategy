@@ -82,9 +82,9 @@ function renderCard(card) {
       `${card.gain_if_false.toFixed(1)} s</span></div>`;
     html += `<div class="kv">pit now: <span>${card.pit_now_plan}</span><br>` +
       `stay out: <span>${card.stay_out_plan}</span></div>`;
-    if (card.p_soft_bias) {
-      html += `<div class="kv">with soft p50 +0.075 s: ` +
-        `<span>${pct(card.p_soft_bias["0.5"])}</span> at correlation 0.5</div>`;
+    if (card.p_p50_bias) {
+      html += `<div class="kv">with p50 +0.09 s on MEDIUM and SOFT beyond 15 laps ahead: ` +
+        `<span>${pct(card.p_p50_bias["0.5"])}</span> at correlation 0.5</div>`;
     }
     if (card.share_h_gt_30 > 0) {
       html += `<div class="kv">${pct(card.share_h_gt_30)} of plan laps are more than 30 ` +
