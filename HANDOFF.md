@@ -119,6 +119,46 @@ traffic cost on pit exit, and any claim that depends on track position. The opti
 joint Monte Carlo and the comparison with what teams actually ran were not built in Session 4
 and have not been built since.
 
+## VALIDATION CEILING: n=1 on the real-call path is Fast Flag's, not ours
+
+THE PREMISE THAT MORE RACES FIXES n=1 IS FALSE. It was the stated reason for the Session 8
+holdout expansion and the screening falsified it. Record this before anyone plans around the
+decision path again.
+
+src/live.py reads Fast Flag recs from ~/fast-flag/data/timeline/<race>.json.gz and has no
+fallback: no timeline, no recs, no decision. Fast Flag has timelines for FIVE races:
+    2021_Azerbaijan   2025_Abu_Dhabi   2025_Japanese   2025_Singapore   2025_United_States
+Four of those are already our holdout. data/case_studies/ holds the same five. So the number
+of holdout races on which a REAL Fast Flag call can be scored is capped at 4, and only one of
+those four has a real neutralisation (2025 US, VSC lap 7). Ingesting more races does not move
+it. OUR INGEST WAS NEVER THE CONSTRAINT.
+
+Closing it means building a Fast Flag case study and running their pipeline per race: a
+different repository, telemetry-weight ingest, and the standing constraint that Naman's
+models stay untouched. It is a cross-project job and it is NOT closeable from this repo.
+
+What expanding our holdout does and does not buy:
+    real-call analysis (precision, false calls, lead time, blind window)   UNCHANGED, n=1
+    break-even / hypothetical calls (Session 5, every 10th lap, synthetic) scales with races
+    tyre calibration, pit loss, SC rates, engine replay                    genuinely improves
+Session 5 built the break-even work off 724 hypothetical calls specifically so the project
+would not rest on n=1. That reasoning is now load-bearing rather than cautious.
+
+### OPEN RISK: Fast Flag contamination of candidate holdout races
+Fast Flag's own race lists are readable without a rebuild, and both were checked:
+- TRAINING, 20 races, ~/fast-flag/data/models/risk_meta.json key "races". The 2025 entries
+  are Azerbaijan, Belgian, British, Dutch, Miami, Australian.
+- CHECK, 20 races, ~/fast-flag/docs/charts/escalation_check.json key "check_races". The 2025
+  entries are Saudi Arabian, Emilia Romagna, Sao Paulo, Las Vegas.
+Training races are excluded from our holdout by the rule that moved 2025 Dutch in Session 1.
+Check races were not fitted on (the README says the fixes were found on the 2021 Azerbaijan
+replay and checked on the TRAINING races, never on the check set), so the machine learning
+models never saw them, but results have been reported on them. They are weaker than clean.
+STILL UNVERIFIED: ~/fast-flag/data/features/ holds only 3 of the 20 training races locally
+(2023_Australian, 2024_Canadian, 2025_Azerbaijan), so the lists above come from committed
+metadata rather than from the data. If a race list changes upstream, ours goes stale silently.
+Re-check both files before trusting any holdout race for real-call work.
+
 ## Stack and conventions
 - Python 3.11, fastf1, pandas, pyarrow, numpy, pyyaml, pytest, ruff
 - Later sessions: scikit-learn, lightgbm, torch, fastapi, uvicorn

@@ -43,6 +43,27 @@ anything. The analysis is built to be informative anyway: the break-even work be
 driven off 724 hypothetical calls rather than the single observed one, precisely so the
 conclusions do not rest on n = 1.
 
+### That ceiling is not mine to raise
+
+The obvious fix is more races, and it does not work. This project consumes Fast Flag as an
+upstream input, and a Fast Flag recommendation for a race exists only if Fast Flag has built
+a timeline for it. It has built five, four of which are already these holdout races. Adding
+races to my own pipeline, which I did in Session 8 and which took fifteen minutes, moves the
+count not at all.
+
+So the validation ceiling here is set by a dependency I do not control. Raising it means
+running someone else's pipeline over new races in their repository, which is a different
+project with its own owner and its own compute. That is worth naming plainly, because it is
+a structural property of building on top of an upstream system rather than an oversight in
+this one: **you inherit your dependency's coverage as your own evidence ceiling, and no
+amount of work on your side of the boundary moves it.** I found this by checking what the
+upstream actually had on disk rather than assuming my own pipeline was the constraint, and
+the assumption had already survived three sessions unexamined.
+
+Expanding the race set is still worth doing, just not for that reason. It scales the
+hypothetical-call analysis, the tyre model's holdout calibration, pit loss and the engine
+replay. It does not move n = 1.
+
 ## The finding: the system is blind exactly when an early call arrives
 
 On the one real event, Fast Flag called the incident at the end of lap 5, **61 s before race
