@@ -14,7 +14,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from src.splits import load_splits, split_of
+from src.splits import is_configured, load_splits, split_of
 
 RAW_DIR = Path("data/processed/raw")
 OUT_PATH = Path("data/processed/laps_clean.parquet")
@@ -179,14 +179,22 @@ def clean_race(race_path: Path) -> pd.DataFrame:
 def build(split: str | None = None) -> pd.DataFrame:
     frames = []
     splits = load_splits()
+    skipped = []
     for race_path in sorted(RAW_DIR.iterdir()):
         if not race_path.is_dir():
             continue
         meta = pd.read_parquet(race_path / "meta.parquet").iloc[0]
-        if split and split_of(int(meta["season"]), str(meta["event"]), splits) != split:
+        season, event = int(meta["season"]), str(meta["event"])
+        if not is_configured(season, event, splits):
+            skipped.append(f"{season} {event}")      # stale raw dir, see splits.is_configured
+            continue
+        if split and split_of(season, event, splits) != split:
             continue
         print(f"cleaning {race_path.name} ...", flush=True)
         frames.append(clean_race(race_path))
+    if skipped:
+        print(f"skipped {len(skipped)} raw dir(s) not in config/races.yaml: "
+              f"{', '.join(skipped)}", flush=True)
     if not frames:
         raise SystemExit("no races found, run python -m src.ingest first")
     return pd.concat(frames, ignore_index=True)

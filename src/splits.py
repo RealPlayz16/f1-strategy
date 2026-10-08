@@ -38,6 +38,20 @@ def split_of(season: int, event: str, splits: dict[tuple[int, str], str] | None 
     return hits.pop()
 
 
+def is_configured(season: int, event: str,
+                  splits: dict[tuple[int, str], str] | None = None) -> bool:
+    """Is this race listed in config/races.yaml at all?
+
+    data/processed/raw/ can hold races the config no longer lists: one excluded after it was
+    ingested (2025 Miami, tyre counter restart) or one ingested through a throwaway config
+    while screening candidates. Those directories are stale, not inputs. Anything that walks
+    raw/ must skip them rather than crash in split_of or, worse, fold them into a fit.
+    """
+    splits = load_splits() if splits is None else splits
+    return len({s for (yr, q), s in splits.items()
+                if yr == int(season) and str(event).startswith(q)}) == 1
+
+
 def add_split(df: pd.DataFrame) -> pd.DataFrame:
     """Add a split column from season and event."""
     splits = load_splits()

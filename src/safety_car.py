@@ -30,7 +30,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from src.splits import load_splits, split_of
+from src.splits import is_configured, load_splits, split_of
 
 RAW_DIR = Path("data/processed/raw")
 EVENTS_PATH = Path("data/processed/sc_events.parquet")
@@ -96,6 +96,8 @@ def build_events(raw_dir: Path = RAW_DIR) -> tuple[pd.DataFrame, pd.DataFrame]:
         if not p.is_dir():
             continue
         meta = pd.read_parquet(p / "meta.parquet").iloc[0]
+        if not is_configured(int(meta["season"]), str(meta["event"])):
+            continue                      # stale raw dir, not in config/races.yaml
         laps = pd.read_parquet(p / "laps.parquet")
         rcm = pd.read_parquet(p / "rcm.parquet")
         season, event = int(meta["season"]), str(meta["event"])
