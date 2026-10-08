@@ -154,6 +154,14 @@ Training races are excluded from our holdout by the rule that moved 2025 Dutch i
 Check races were not fitted on (the README says the fixes were found on the 2021 Azerbaijan
 replay and checked on the TRAINING races, never on the check set), so the machine learning
 models never saw them, but results have been reported on them. They are weaker than clean.
+CONDITIONAL RULE, CHECK IT BEFORE ANY REAL-CALL WORK: the four Fast Flag CHECK races stayed
+parity-eligible in the Session 8 split and 2025 Las Vegas is in the holdout. That is safe only
+because no Fast Flag timeline exists for any of them, so no real call can be scored on them
+and the contamination is inert. IF A FAST FLAG TIMELINE IS EVER BUILT FOR A CHECK RACE, THAT
+RACE MOVES TO TRAIN AND THE AFFECTED FITS ARE REBUILT. The risk goes live the moment a
+timeline appears, which is exactly the kind of thing that gets forgotten. Checking costs one
+ls of ~/fast-flag/data/timeline.
+
 STILL UNVERIFIED: ~/fast-flag/data/features/ holds only 3 of the 20 training races locally
 (2023_Australian, 2024_Canadian, 2025_Azerbaijan), so the lists above come from committed
 metadata rather than from the data. If a race list changes upstream, ours goes stale silently.

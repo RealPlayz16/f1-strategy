@@ -1,5 +1,13 @@
 # Dry-race candidates, 2023-2025 regulation era.
 # Wet races (INTERMEDIATE/WET compounds present) are auto-excluded by ingest.py.
+#
+# Session 8 split. The 13 new dry 2025 races were split by ROUND PARITY, which is
+# independent of the outcome being validated: picking holdout races by their SC/VSC count
+# would select on the dependent variable and inflate the apparent neutralisation rate.
+# Odd round -> train, even round -> holdout, EXCEPT Fast Flag training races, which are
+# forced to train by the rule that moved 2025 Dutch in Session 1.
+# Fast Flag check races stay parity-eligible; see the conditional rule in HANDOFF.md.
+# Result: train 31, holdout 9 with 6 SC/VSC deployments.
 train:
   - {season: 2023, event: "Bahrain"}
   - {season: 2023, event: "Saudi Arabian"}
@@ -23,9 +31,24 @@ train:
   - {season: 2025, event: "Spanish"}
   - {season: 2025, event: "Hungarian"}
   - {season: 2025, event: "Italian"}
-  - {season: 2025, event: "Dutch"}  # moved from holdout: Fast Flag trained on it
+  - {season: 2025, event: "Dutch"}
+  # Session 8 additions
+  - {season: 2025, event: "Saudi Arabian"}  # Fast Flag CHECK race
+  - {season: 2025, event: "Miami"}  # Fast Flag TRAINING race, forced
+  - {season: 2025, event: "Emilia Romagna"}  # Fast Flag CHECK race
+  - {season: 2025, event: "Austrian"}
+  - {season: 2025, event: "Belgian"}  # Fast Flag TRAINING race, forced
+  - {season: 2025, event: "Azerbaijan"}  # Fast Flag TRAINING race, forced
+  - {season: 2025, event: "São Paulo"}  # Fast Flag CHECK race
+  - {season: 2025, event: "Qatar"}
 holdout:
   - {season: 2025, event: "Japanese"}
-  - {season: 2025, event: "United States"}  # replaces 2025 Dutch, not in Fast Flag training
+  - {season: 2025, event: "United States"}
   - {season: 2025, event: "Singapore"}
   - {season: 2025, event: "Abu Dhabi"}
+  # Session 8 additions, even rounds, none a Fast Flag training race
+  - {season: 2025, event: "Chinese"}
+  - {season: 2025, event: "Monaco"}
+  - {season: 2025, event: "Canadian"}
+  - {season: 2025, event: "Mexico City"}
+  - {season: 2025, event: "Las Vegas"}  # Fast Flag CHECK race, see the conditional rule in HANDOFF
