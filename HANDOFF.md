@@ -22,7 +22,8 @@ triggers. Delivered with a pit-wall dashboard and an Arduino "BOX" pit board.
 7. Engine following model rework (DONE as a rework; validation still fails, cause now
    identified and split between the engine and the pass model. See Session 7 results.)
 8. free_missing routing (DONE, misses its own criterion in 1 of 4 bins, does not fix the
-   engine, kept for correctness), then expand the holdout (NOT STARTED)
+   engine, kept for correctness); race set 27 -> 38 and full rebuild (DONE); Session 5
+   backtest on the larger holdout NOT re-run
 
 ## Working style
 - Minimal explanation, direct bullets, step-by-step commands
@@ -950,6 +951,100 @@ about a fix, and here it moved both ways at once.
   it; the docstring records how it differs from free_pace and by how much.
 - src/engine.py: Params.route_missing, clear-air tracking in simulate(), covered flag in the
   pair log, and a COVERAGE ROUTING table in the run output carrying the criterion.
+
+## Session 8 results, item 2 (done): race set expanded, pipeline rebuilt
+
+27 races (23 train / 4 holdout) -> 38 races (29 train / 9 holdout). 15 new 2025 races
+screened, 2 wet-excluded automatically, 2 more excluded for data quality found during the
+rebuild (below). Split by ROUND PARITY, never by deployment count. Holdout 9 races with 6
+SC / VSC deployments; see "## VALIDATION CEILING" for why 6 is enough and why more would not
+have helped.
+
+### Against the Session 1 to 3 baselines
+                                was        now     reading
+  races                      27          38
+  clean lap share            87.9%       87.7%    resampling, not a change
+  green pit loss, median     22.94 s     22.30 s  29 (season, event) rows, was 23
+  fuel K                     3.249       3.206    gate passed; per-lap 0.0565 -> 0.0558
+  K by season        3.18/3.26/3.32  3.18/3.26/3.18
+  tyre below p10 / above p90 11.6/9.8%   10.7/10.2%  IMPROVED, both nearer the 10/10 target
+  tyre MAE p50               0.508       0.506    flat
+  tyre race offset sd        0.17        0.168    flat
+  soft p50 bias             +0.075 s    +0.022 s  largely gone, see below
+  pass AUC / Brier        0.926/0.045  0.924/0.0435  flat
+  pass over-prediction        15%         21%     WORSE, see below
+Train grew 26%, so clean share, pit loss and K move for resampling reasons and none of those
+moves means anything about model quality. They are recorded so the next session does not read
+them as drift.
+
+### RESOLVED: the K season drift was small-sample
+Session 2 recorded K by season as 3.18 / 3.26 / 3.32 and said "slight upward drift, watch it".
+2023 and 2024 are unchanged because their races are unchanged; 2025 moved 3.32 -> 3.179 once
+it had more than five races. There is no drift. Stop watching it.
+
+### Tyre model: calibration IMPROVED on a larger, more varied train set
+10.7% below p10 and 10.2% above p90, against 11.6 / 9.8 on 23 races. Better at every horizon,
+h=1 10.1/9.3 and h=30 11.7/10.9 (was 13.1/10.5). Width, MAE and race offset sd are flat.
+  READ THIS CAREFULLY: it is GroupKFold over the 29 TRAIN races, not the 9 holdout races.
+  src/tyre.py never loads the holdout (it prints "holdout rows: 0") and that is correct, the
+  holdout touches nothing but the backtest. The generalisation gain is that the folds now
+  leave out more distinct tracks, not that the holdout was scored.
+
+SOFT BIAS LARGELY GONE, AND REPLACED BY A HORIZON BIAS. Soft p50 median residual is +0.022 s,
+against +0.075 recorded in Session 2, with MEDIUM +0.007 and HARD +0.008. The Session 2 soft
+bias was substantially a small-sample artefact of 23 races. What is there now is different and
+HORIZON shaped, not compound shaped:
+    h=30   HARD -0.020   MEDIUM +0.087   SOFT +0.091
+    h=15   HARD +0.013   MEDIUM +0.009   SOFT +0.037
+So long-horizon p50 is slow by about 0.09 s on the two softer compounds and not on HARD.
+Anything that was going to apply a soft + 0.075 sensitivity should now apply a long-horizon
+sensitivity on MEDIUM and SOFT instead. The old correction is the wrong size and the wrong
+axis.
+
+### Pass model: overall over-prediction got WORSE, and I predicted the opposite
+21% over on train battles (1097 predicted against 910 observed), against 15% on 23 races. I
+said before the rebuild that it should improve because 6 of the new train races are at tracks
+the model had never seen. That was wrong and is recorded as wrong.
+The per-population numbers show why the headline moved:
+    seen tracks     predicted 0.0775  observed 0.0743    4% over  (was 1% over)
+    unseen tracks   predicted 0.1338  observed 0.0770   74% over  (was 71% over)
+Per population almost nothing changed. The overall figure is a mixture of the two, and adding
+distinct tracks raises the share of CV rows that sit at a track the fold never saw, so the
+worse mixture is mostly composition, not a worse model. Free-air coverage 51.3%, was 51.8%.
+The unseen-track defect is unchanged at about 70% over and remains the pass model's largest
+known error, alongside the covered-branch selection in "## ENGINE LIMITATION".
+
+### THREE DATA DEFECTS IN THE 13 NEW RACES, none of which the existing gates caught
+The original 27 races had none of these, which is exactly why no gate existed for them.
+1. 2025 MIAMI, excluded. FastF1 carries no compound, tyre_life or stint for laps 1-24 for 19
+   of 20 cars, and where the feed resumes the tyre counter RESTARTS: 15 of 20 drivers show an
+   age below the laps they had already completed with no pit stop before it. The data is
+   wrong, not missing. Surfaced as "SVD did not converge" inside fuel.py. Dropping the NaN
+   laps, the obvious fix, would have kept 559 laps with ages understated by up to 24.
+   Now caught by ingest.tyre_counter_resets. Checked across all 40 races: Miami only.
+2. 2025 BELGIAN, excluded. A drying track after a wet delay, which looks dry to a compound
+   test and is not dry to any lap-time model: no INTERMEDIATE appears in its recorded laps.
+   Field median clean lap 122.8 s at lap 5 and 107.9 s by lap 22. Surfaced as fuel.py's own
+   gate refusing to write, with Belgian showing a per-race slope of 1.2169 s/lap against a
+   median of 0.0571. Now caught by clean.early_lap_excess_s at DRYING_EXCESS_S = 6.0 s, a
+   threshold set from the measured distribution (39 other races: median 2.08 s, max 3.52 s;
+   Belgian 16.04 s) and above what K plus the early-stint effect can produce, under 4 s.
+3. STALE RAW DIRECTORIES, self-inflicted. Screening candidate races through a throwaway
+   config wrote into data/processed/raw/, so a race the config no longer listed stayed on
+   disk and every raw/ scanner crashed in split_of. splits.is_configured now skips them and
+   clean.py prints what it skipped. The crash was the mild outcome: a scanner that had
+   tolerated the missing split by guessing would have folded an excluded race into a fit.
+   IF SCREENING CANDIDATES AGAIN, ingest into a separate tree or clean up afterwards.
+
+Both race defects had a cheap fix that would have left the corruption in place and the
+pipeline running. Both were caught by a gate or a crash pointing at a race rather than at
+code. Expanding a dataset by 48% found more bad data than bad code.
+
+### Not done in Session 8
+The Session 5 backtest was NOT re-run on the larger holdout. It is the remaining item and it
+is worth doing for the hypothetical-call analysis, which scales with races, but NOT for the
+real-call path, which is capped at the 4 races with Fast Flag timelines however many races
+the holdout has.
 
 ## Session 8 brief: free_missing routing, then expand the holdout
 
