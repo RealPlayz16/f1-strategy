@@ -203,7 +203,25 @@ def main() -> int:
               f"{p_calls['VSC']['hits']}/{p_calls['VSC']['n']}, P = {p_calls['VSC']['p']:.2f} "
               f"(90% {p_calls['VSC']['q05']:.2f}-{p_calls['VSC']['q95']:.2f}).", ""]
     built = [r["race"] for r in bt["races"]]
-    lines += [f"Holdout races with a Fast Flag timeline: {', '.join(built)}.", ""]
+    n_hold = len(sorted(be["race"].unique())) if len(be) else len(built)
+    lines += [
+        f"Holdout races with a Fast Flag timeline: {', '.join(built)}.",
+        "",
+        "### Two different sample sizes in this report, do not mix them",
+        "",
+        f"The holdout is **{n_hold} races**, and the hypothetical-call analysis below uses all "
+        f"of them. The **real-call** evidence does not: a Fast Flag recommendation exists only "
+        f"for a race Fast Flag has built a timeline for, and it has built "
+        f"**{len(built)}**. Expanding the race set in Session 8 scaled the hypothetical sample "
+        f"and moved the real-call sample not at all.",
+        "",
+        "**The real-call path is unchanged at n = 1**: one real neutralisation, 2025 United "
+        "States, VSC lap 7. A larger break-even sample is more coverage of race *situations*, "
+        "not more validation of the live decision system. The ceiling is set by an upstream "
+        "dependency this project does not control, so no amount of work here raises it. See "
+        "\"VALIDATION CEILING\" in HANDOFF.md.",
+        "",
+    ]
     if len(be):
         lines += break_even_section(be, p_calls)
     lines += false_call_section(dec, bt["races"])

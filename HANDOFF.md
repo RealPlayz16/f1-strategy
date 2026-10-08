@@ -1088,11 +1088,40 @@ Both race defects had a cheap fix that would have left the corruption in place a
 pipeline running. Both were caught by a gate or a crash pointing at a race rather than at
 code. Expanding a dataset by 48% found more bad data than bad code.
 
+### Session 5 backtest re-run on the 9-race holdout (hypothetical calls only)
+1616 hypothetical calls, against 724 on 4 races. Full report: docs/session5_results.md.
+
+THE REAL-CALL PATH DID NOT MOVE AND CANNOT. The backtest printed the ceiling itself: 5 of the
+9 holdout races have no Fast Flag timeline and were skipped by name. Of the 4 that have one,
+Abu Dhabi and Japanese produce 0 call episodes, Singapore 1 (the false call) and United States
+1 (the real VSC). Still ONE real neutralisation. The report now carries a labelled section,
+"Two different sample sizes in this report, do not mix them", so a 2.2x larger break-even
+sample cannot be read as 2.2x more validation of the live decision.
+
+Break-even at phi 0.08, then -> now:
+    pit anyway regardless of the call      38%  ->  33%
+    never pit even if the call is real     44-58%  ->  SC 61%, VSC 51%
+    acting on FF precision beats ignoring  SC 44% / VSC 49%  ->  SC 38% / VSC 44%
+    of which the CALL changes the decision SC 6 / VSC 11 points  ->  SC 5 / VSC 11 points
+THE CONCLUSIONS ARE STABLE under a 2.2x larger and more varied sample, which is the useful
+result: the Session 5 finding that the call changes the decision in only about 5 to 11
+percentage points was not an artefact of four races. Every p* remains an upper bound because
+track position is still not priced.
+
+Two smaller changes from the rebuilt models:
+- The new long-horizon sensitivity (p50 + 0.09 on MEDIUM and SOFT beyond h = 15) flips 0 of 15
+  cars at the real event, where the dead soft + 0.075 flipped 1 of 15. The sensitivity is
+  milder here because the US decision window is short-horizon.
+- Singapore false call: 14 of 20 cars would have pitted at a median +1.3 s free-air gain, was
+  16 of 20 at +1.0 s.
+
 ### Not done in Session 8
-The Session 5 backtest was NOT re-run on the larger holdout. It is the remaining item and it
-is worth doing for the hypothetical-call analysis, which scales with races, but NOT for the
-real-call path, which is capped at the 4 races with Fast Flag timelines however many races
-the holdout has.
+- The tyre model has still never been scored on the holdout. See the correction above.
+- The engine's 0-0.5 s battle-lap excess (2.12x) still has no identified mechanism, and by
+  user decision is not to be hunted without one to test.
+- A pass model refit with a causal coverage flag, which is the complete fix for the
+  covered-branch selection in "## ENGINE LIMITATION". The Session 8 routing is partial by
+  construction.
 
 ## Session 8 brief: free_missing routing, then expand the holdout
 
