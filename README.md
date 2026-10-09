@@ -356,13 +356,14 @@ the repository root.
 
 What to look at:
 
-1. **2025 United States**, press *jump to the call*. Fast Flag calls a Safety Car at the end
-   of lap 5, 61 s before race control deploys a VSC (right event, wrong kind). Every one of
-   the 20 cars reads **"no decision: model has no anchor yet (laps 2-4 skipped)"**. That is
-   the blind window above, on screen.
-2. Step one lap on. Race control deploys the VSC, the system can now decide, and every car
-   comes back **"overlapping: the model cannot separate the two plans"**, with P(pit better)
-   shown as a range across the three correlation assumptions rather than a single number.
+1. **2025 United States**, press *jump to the call*. The replay lands on the end of lap 6,
+   where Fast Flag calls a Safety Car 61 s before race control deploys a VSC (right event,
+   wrong kind). Every one of the 20 cars reads **"no decision: model has no anchor yet (laps
+   2-4 skipped)"**. That is the blind window above, on screen.
+2. Step one lap on to lap 7. Race control deploys the VSC, the system can now decide, and
+   **15 of the 20 cars** come back **"overlapping: the model cannot separate the two
+   plans"**, with P(pit better) shown as a range across the three correlation assumptions
+   rather than a single number. The other five still have no anchor.
 3. **2025 Singapore**, *jump to the call*, then step forward two laps: the Safety Car call
    turns out to be false, and the page says so only once the replay reaches the point where
    that would be known.
