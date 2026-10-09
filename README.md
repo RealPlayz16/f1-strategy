@@ -18,8 +18,9 @@ of what it does and does not account for.
   mutating every future row leaves the state byte-identical.
 - **Predicts lap times with calibrated uncertainty.** A LightGBM median plus a quantile
   network trained on out-of-race residuals, anchored on the live race and horizon
-  dependent. On held-out races, 11.6% of laps fall below p10 and 9.8% above p90 against a
-  10 / 10 target.
+  dependent. On held-out training folds, 10.7% of laps fall below p10 and 10.2% above p90
+  against a 10 / 10 target. Scored once on the holdout itself, that becomes 18.4% below p10
+  and 10.7% above: a location error, not an interval error. See the limitations.
 - **Measures pit loss per race** from pit lane transit, keyed by season and event, with the
   Safety Car discount as a stated, swept parameter rather than a fitted number that the
   data cannot support.
@@ -28,19 +29,20 @@ of what it does and does not account for.
   probability applied. The output is P(pit better) across three assumptions about how the
   two plans' errors correlate, plus the gain distribution. When the distributions overlap,
   the system says they overlap instead of picking a side.
-- **Backtests on four holdout races** that touched no fit, and reports the cost of acting
+- **Backtests on nine holdout races** that touched no fit, and reports the cost of acting
   on a false call alongside the benefit of acting on a true one.
 
 ## The scope of the evidence
 
-The four holdout races contain exactly **one real neutralisation** (2025 United States, VSC
-on lap 7). So the decision path has n = 1.
+The nine holdout races contain six real neutralisations, but only four of those races have a
+Fast Flag timeline, and among those four there is exactly **one real neutralisation** (2025
+United States, VSC on lap 7). So the decision path has n = 1.
 
 That number is stated up front because it is the binding constraint on every claim here: it
 is why this is a working live decision system demonstrated end to end, with honest
 uncertainty, and not a validated strategy system. One real neutralisation cannot validate
 anything. The analysis is built to be informative anyway: the break-even work below is
-driven off 724 hypothetical calls rather than the single observed one, precisely so the
+driven off 1616 hypothetical calls rather than the single observed one, precisely so the
 conclusions do not rest on n = 1.
 
 ### That ceiling is not mine to raise
@@ -60,9 +62,11 @@ amount of work on your side of the boundary moves it.** I found this by checking
 upstream actually had on disk rather than assuming my own pipeline was the constraint, and
 the assumption had already survived three sessions unexamined.
 
-Expanding the race set is still worth doing, just not for that reason. It scales the
-hypothetical-call analysis, the tyre model's holdout calibration, pit loss and the engine
-replay. It does not move n = 1.
+Expanding the race set was still worth doing, just not for that reason, and it was done: 27
+races became 38, and the holdout went from four races to nine. That scaled the
+hypothetical-call sample from 724 to 1616, let the tyre model be scored on a real holdout for
+the first time, and added five more neutralisations to the holdout. It moved n = 1 not at all,
+because none of the five new holdout races has a Fast Flag timeline.
 
 ## The finding: the system is blind exactly when an early call arrives
 
@@ -72,8 +76,8 @@ two clean laps from lap 5 onward (laps 2 to 4 are skipped because of a measured 
 effect on lap times), so it cannot predict anything before about lap 6 or 7. The call
 arrived inside that blind window and bought nothing.
 
-This generalises. In the 19 train-race neutralisations, 4 deployed before lap 6 and one more
-on lap 7. Early Safety Cars are common, and in F1 they are often the strategically important
+This generalises. Across the 27 train-race neutralisations, 8 deployed before lap 6 and 3
+more on lap 7, so 11 of 27 land in or next to the blind window. Early Safety Cars are common, and in F1 they are often the strategically important
 ones, because the field is bunched and nobody has stopped yet (a track-position effect this
 model does not price). A system that cannot act before lap 6 is blind in that window.
 
@@ -87,16 +91,19 @@ Two more results from the backtest ([docs/session5_results.md](docs/session5_res
   but for none of them did the later no-call window fall outside the VSC (it ran 213 s). A
   Safety Car (median 3 laps) outlasts a third of a lap easily; a short VSC is the only case
   where the lead can change a car's options.
-- **Break-even precision: the call rarely decides the stop.** Over 724 hypothetical calls
-  (every 10th lap, every car, all four holdout races), pitting now wins in 38% of situations
-  even if the call is false (the car is in its window anyway), and loses in 44 to 58% even
-  if the call is real. Only in between does precision matter. At phi 0.08, acting on Fast
-  Flag's measured precision beats ignoring it in 44% of situations for Safety Car calls and
-  49% for VSC calls, but only **6 points (SC) and 11 points (VSC)** of that are cases where
-  the call changes the decision. Every break-even here is an upper bound, because track
-  position is not priced.
+- **Break-even precision: the call rarely decides the stop.** Over 1616 hypothetical calls
+  (every 10th lap, every car, all nine holdout races), pitting now wins in 33% of situations
+  even if the call is false (the car is in its window anyway), and loses in 51% (VSC) to 61%
+  (SC) even if the call is real. Only in between does precision matter. At phi 0.08, acting
+  on Fast Flag's measured precision beats ignoring it in 38% of situations for Safety Car
+  calls and 44% for VSC calls, but only **5 points (SC) and 11 points (VSC)** of that are
+  cases where the call changes the decision. Every break-even here is an upper bound,
+  because track position is not priced.
+  These numbers held up when the sample grew: on four holdout races and 724 calls the same
+  figures were 38%, 44 to 58%, 44 / 49% and 6 / 11 points. The conclusion that the call
+  decides the stop in only about 5 to 11 points of cases was not an artefact of four races.
 - **False calls.** Fast Flag made one false call across the holdout (Singapore, SC, late in
-  the race). 16 of 20 cars would have pitted on it, at a median gain of 1.0 s in free-air
+  the race). 14 of 20 cars would have pitted on it, at a median gain of 1.3 s in free-air
   time, because they were in their window anyway. Japan had no calls; Abu Dhabi only
   yellows.
 
@@ -208,23 +215,33 @@ attributable to our bias*. Nothing closed. The gap widened slightly, 2.5 s to 2.
 stop-count agreement was identical to the tenth of a percent. The tyre bias is not what
 separates this optimizer from the teams.
 
-That is the second prediction this project has written down in advance and then refuted with
-its own data; the first is in the section above on how analysis bugs surfaced. Both are kept
-in the record, because a prediction that fails tells you more than one that lands.
+That is one of **five** predictions this project wrote down in advance and then refuted with
+its own data. The others: that routing the pass model's coverage flag causally would reduce
+the engine's pass count (it raised it, and only a control run on identical data showed the
+fall had come from somewhere else); and three of five expectations about the tyre model's
+holdout score, including that the degradation would be symmetric when it was one-sided. All
+are kept in the record, because a prediction that fails tells you more than one that lands.
 
 ## Honest limitations
 
-- **The 20-car race engine failed validation** (Session 4). It does not reproduce how cars
-  follow each other: one version over-penalised following, the fix under-penalised it and
-  tripled the passes. So nothing here makes a traffic or overtaking claim, and there is no
-  strategy optimizer or Monte Carlo ranking.
+- **The 20-car race engine failed validation**, three times. It does not reproduce how cars
+  follow each other: the first version over-penalised following, the second under-penalised
+  it and tripled the passes, and a third reworked it as a pace constraint rather than a
+  position rule, which fixed the direction of the error and still over-predicts passes by
+  1.78x. So nothing here makes a traffic or overtaking claim. The strategy optimizer exists
+  and is the headline above, but it prices traffic at zero rather than using this engine, and
+  there is still no Monte Carlo ranking.
 - **Pit loss under a Safety Car is a stated assumption** (phi = 0.08, swept 0.05 to 0.12).
   It is not identifiable from lap times with this data: on laps where a Safety Car starts or
   ends, stay-out lap times spread 22 to 31 s with running position.
-- **Tyre model:** calibrated on held-out races (10.7% below p10, 10.2% above p90), but p50
-  runs about 0.09 s/lap slow on MEDIUM and SOFT more than 15 laps ahead, and intervals beyond
-  30 laps ahead are a floor. Those held-out races are folds of the *training* set; the model
-  has never been scored on the holdout.
+- **Tyre model:** 10.7% below p10 and 10.2% above p90 on held-out *training* folds. Scored
+  once on the real holdout it gives 18.4% below p10, 10.7% above, and MAE 0.665 s against
+  0.506. The upper tail stays calibrated and only the lower tail fails, with a median
+  residual of -0.099 s, so this is a **location** error and not an interval error; a pooled
+  miss rate cannot tell those apart. Monaco is much the worst race (MAE 1.374 s against 0.542
+  elsewhere, both tails blown), which is the model failing at the one circuit where lap time
+  is dominated by track position rather than tyre state: the missing physics surfacing where
+  it cannot be ignored. Intervals beyond 30 laps ahead remain a floor.
 - **Pass model** over-predicts on tracks it has not seen (13.4% vs 7.7%), and 21% overall.
 - **One real neutralisation** on the decision path. See the scope section above.
 - **Arduino "BOX" pit board:** planned, not built. The serial path would be a one-line
@@ -232,9 +249,21 @@ in the record, because a prediction that fails tells you more than one that land
 
 ## Data
 
-27 dry races, 2023 to 2025 ([config/races.yaml](config/races.yaml)). 23 train, 4 holdout
-(2025 Japanese, United States, Singapore, Abu Dhabi). Holdout races touch no fit. 2025 Dutch
-was moved out of the holdout because Fast Flag trained on it.
+38 dry races, 2023 to 2025 ([config/races.yaml](config/races.yaml)). 29 train, 9 holdout
+(2025 Abu Dhabi, Canadian, Chinese, Japanese, Las Vegas, Mexico City, Monaco, Singapore,
+United States). Holdout races touch no fit.
+
+Three rules decided the split, and none of them is "pick the interesting races":
+
+- **New races were split by round parity**, odd to train and even to holdout. Choosing holdout
+  races by how many Safety Cars they contained would have selected on the very thing the
+  backtest measures.
+- **Fast Flag's own training races are forced into train**, so its models never see a holdout
+  race: 2025 Dutch, Azerbaijan, Belgian and Miami.
+- **Two races were excluded for data quality**, each caught by a component refusing to run
+  rather than by a test. 2025 Miami because FastF1's tyre counter restarts mid-race, making
+  tyre ages wrong rather than missing; 2025 Belgian because it is a drying track after a wet
+  delay, which looks dry to a compound test and is not dry to any lap-time model.
 
 ## See it work (three commands)
 
@@ -250,8 +279,8 @@ the repository root.
 
 What to look at:
 
-1. **2025 United States**, press *jump to the call*. Fast Flag calls a Safety Car on lap 6,
-   61 s before race control. Every one of the 20 cars reads **"no decision: model has no
+1. **2025 United States**, press *jump to the call*. Fast Flag calls a Safety Car at the end
+   of lap 5, 61 s before race control deploys a VSC (right event, wrong kind). Every one of the 20 cars reads **"no decision: model has no
    anchor yet (laps 2-4 skipped)"**. That is the blind window above, on screen.
 2. Step one lap on. Race control deploys the VSC, the system can now decide, and every car
    comes back **"overlapping: the model cannot separate the two plans"**, with P(pit better)
@@ -282,6 +311,9 @@ python -m src.overtake_model
 python -m src.backtest
 python -m src.backtest --break-even
 python -m src.live_report
+python -m src.engine
+python -m src.optimizer
+python -m src.tyre_holdout
 pytest -q
 ```
 
@@ -302,6 +334,8 @@ timelines for the holdout races, built in a Fast Flag clone at `~/fast-flag` wit
 | `src/traffic.py`, `src/overtake_model.py` | Free-air pace, dirty air (parameterised), pass probability |
 | `src/rules.py` | Compound rule, DRS, overtaking under SC, pit loss by condition, stint caps |
 | `src/engine.py` | 20-car engine (failed validation, documented) |
+| `src/optimizer.py` | DP strategy optimizer; free-air objective, traffic priced at zero |
+| `src/tyre_holdout.py` | One terminal scoring pass of the frozen tyre model on the holdout |
 | `src/live.py` | Fast Flag hook, leak-tested replay driver, pit-now vs stay-out decision |
 | `src/backtest.py`, `src/live_report.py` | Holdout backtest, break-even precision, results report |
 | `src/dashboard.py`, `src/dashboard_data.py`, `dashboard/` | Pit-wall replay page and its committed demo snapshots |
