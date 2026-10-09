@@ -30,6 +30,10 @@ triggers. Delivered with a pit-wall dashboard and an Arduino "BOX" pit board.
 10. Tyre model scored on the holdout, one terminal pass of the frozen model (DONE).
     Below p10 18.4% against 10.7% in CV, a ONE-SIDED miss; MAE 0.665 against 0.506.
     Three of five pre-stated predictions wrong. Nothing retuned afterward.
+11. README (DONE). Staleness fixed as its own commit, then restructured so the result leads.
+12. Engine following model, exploratory (DONE, NOTHING BUILT). The 0-0.5 excess carried as
+    unidentified since Session 7 is now identified by arithmetic, and the one candidate fix
+    was rejected by arithmetic without being built. THE ENGINE LINE IS CLOSED.
 
 ## Working style
 - Minimal explanation, direct bullets, step-by-step commands
@@ -72,6 +76,12 @@ to the same number must agree. Mechanism tests would not have caught any of the 
   false. Session 7 then produced three more inferred claims that the instrumented run
   contradicted outright. When a tidy explanation arrives before the measurement, treat the
   tidiness as a warning.
+- NOT EVERY PREDICTION IS A FORECAST. "My predictions get refuted about half the time, so
+  build it and see" is sound for a forecast about an outcome under a mechanism nobody has
+  pinned down. It is not sound for arithmetic on a decomposition that has already been
+  verified: refuting a sum is a different act from refuting a forecast, and the base rate for
+  one says nothing about the other. Session 12 nearly used the first argument to justify
+  building something the second had already ruled out.
 - WHERE IT FAILS: it needs two independent routes to the same quantity. Session 4's following
   curve had only one, which is part of why two attempts failed without the cause surfacing.
   Introducing the battle-lap distribution in Session 7 was partly about restoring a second
@@ -118,11 +128,53 @@ reproduce following behaviour. It names a mechanism, a location and a size.
 ### The counts
 - Scored passes 60.6 per race against 35.1 actual, 1.73x. Was 2.05x before the Session 8
   free_missing routing.
-- Car-laps within 0.5 s of the car ahead 134.2 per race against 63.2, 2.12x. UNCHANGED by
-  every rework so far, and its mechanism is NOT IDENTIFIED. Not to be hunted without a
-  mechanism to test (user decision, Session 7).
+- Car-laps within 0.5 s of the car ahead 132.9 per race against 66.1, 2.01x. UNCHANGED by
+  every rework so far. ITS MECHANISM IS NOW IDENTIFIED, see "THE 0-0.5 EXCESS" below. The
+  engine line is CLOSED: the one candidate fix was rejected by arithmetic without being
+  built, and nothing further is planned.
 - Battle-lap distribution total 477.4 against 415.0. The other three gap bins are within 10,
   7 and 22%.
+
+### THE 0-0.5 EXCESS: identified in Session 12, and why it was not fixed
+Carried as "mechanism not identified" from Session 7 to Session 11. The cause is arithmetic.
+
+THE RESTORING FORCE IS SMALLER THAN THE BIN. The only thing pushing a held car back is the
+aero penalty, capped at DIRTY_AIR_D0_S = 0.35 s, and the bin is 0.5 s wide. So a pair whose
+follower is more than d0 faster closes, is held, is kicked back by at most 0.35 s, and closes
+again: a cycle that never leaves 0-0.5. Recurrence on the engine's own rule, ignoring noise:
+    delta 0.10  settles at a FIXED POINT, gap 0.86     (lands in 0.5-1, correct)
+    delta 0.20  fixed point, gap 0.71
+    delta 0.35  fixed point, gap 0.50
+    delta 0.50  ALREADY a limit cycle, 100% of its time in 0-0.5
+    delta 0.80  already a limit cycle, 80% of its time in 0-0.5
+Note what that says about the Session 7 story: for delta <= d0 there IS a single fixed point,
+and it sits in the bin that is already right. For delta > d0 the engine ALREADY oscillates.
+The defect is the oscillation's AMPLITUDE, not its absence.
+
+THE BIN IS TWO POPULATIONS WITH DIFFERENT MECHANISMS, measured on engine_pairs.parquet:
+    delta > d0         36.1% of the bin   the confined cycle above
+    0 < delta <= d0    20.9%              fixed point, correctly placed, lands in 0.5-1
+    delta <= 0         43.0%              train propagation parks non-faster cars at minimum
+                                          gap; reality has 24.4% on the covered subset
+The largest contributor is the third, and it is the one no candidate mechanism addressed.
+
+REJECTED WITHOUT BUILDING, by arithmetic (user decision, Session 12). The candidate was a
+per-pair RECOVER state: on being held, keep running the car-ahead's lap time plus the aero
+penalty until the gap reaches DIRTY_AIR_ZERO_GAP_S, then attack again, so recovery persists
+past the point where the pace constraint stops binding. It would have cleared the
+self-fulfilling bar (nothing sampled; its one parameter is the aero curve's REACH, a
+conditional-mean statistic, never an occupancy one). It was rejected because the recurrence
+says it cannot hit the metric:
+    bin      sim     target   ratio      what RECOVER does
+    0-0.5   132.9     66.1     2.01      ~50 laps/race leave, 2.01 -> about 1.26
+    0.5-1   165.3    165.5     1.00      those laps arrive here, 1.00 -> about 1.30
+    1-1.5    97.8    101.7     0.96
+    1.5-2    65.4     85.7     0.76      where the mass actually needs to go
+A miss traded for a miss. The structural reason is decisive and not a matter of degree: the
+excess wants mass landing beyond 1.5 s, and the only principled anchor available sends it to
+just under 1.0. Choosing a larger target would be fitting the validation target, which is
+barred. A NEGATIVE DETERMINED BY ARITHMETIC IS A COMPLETE OUTCOME; it is not a coin flip that
+building would have settled.
 
 ### Trustworthy
 Pit loss, SC / VSC neutralisation, compound rules, anything that runs on free-air pace.
@@ -738,12 +790,16 @@ So the miss is about 1.77x from lap counts and about 1.46x from the pass model b
 the simulated pair population contributes nothing (0.99x). The two causes are independent and
 live in different modules.
 
-### FINDING 1 (engine): 2.11x too many car-laps at minimum gap, MECHANISM NOT IDENTIFIED
+### FINDING 1 (engine): 2.11x too many car-laps at minimum gap
+IDENTIFIED IN SESSION 12: d0 = 0.35 s is smaller than the 0.5 s bin, so a pair with more than
+d0 of pace in hand cycles inside the bin and the aero penalty can never kick it out. See
+"THE 0-0.5 EXCESS" under "## ENGINE LIMITATION". The text below is the Session 7 record.
 Checked and excluded:
 - SC restart compression. Only 12.5 of 141.1 close laps per race fall within 3 laps of a
   neutralisation ending (9%). It is a green-flag phenomenon.
 - The restart gap value. The 1.0 s isolation run moved it by under 5%.
-I do not have an identified mechanism for the remaining excess. Do not guess one.
+At the time of Session 7 there was no identified mechanism. Session 12 found it by
+arithmetic rather than by another engine run; see "## ENGINE LIMITATION".
 
 RETRACTED, measured and false. Three claims were inferred mid-session from the actual-side
 data alone and then contradicted by the instrumented sim-side run. They are recorded here so
@@ -759,6 +815,13 @@ they are not re-derived:
    limit of the model class." WITHDRAWN. Both absences were measured and neither exists.
    There may still be a model-class limit here, but this evidence does not show one and the
    oscillation story is not supported by anything measured.
+
+THESE THREE HAVE NOW BEEN REPEATED BACK AS IF TRUE TWICE, once in the Session 12 brief. They
+are retracted, not open questions. Before using any of them, note what Session 12 measured:
+the engine produces MORE non-faster close followers than reality (43.0% of the 0-0.5 bin
+against 24.4%), and for delta > d0 it ALREADY oscillates rather than sitting at a fixed point.
+A claim that survives in a brief outlives its own refutation unless the refutation is as easy
+to find as the claim.
 
 ### FINDING 2 (pass model, independent of the engine): the covered branch is a selection
 overtake_model.py has a covered branch (free-air pace delta known) and a missing-flag branch.
@@ -1401,8 +1464,9 @@ Two smaller changes from the rebuilt models:
 
 ### Not done in Session 8
 - The tyre model has still never been scored on the holdout. See the correction above.
-- The engine's 0-0.5 s battle-lap excess (2.12x) still has no identified mechanism, and by
-  user decision is not to be hunted without one to test.
+- CLOSED in Session 12: the engine's 0-0.5 s battle-lap excess. Cause identified by
+  arithmetic (d0 smaller than the bin), the one candidate fix rejected by arithmetic without
+  being built, and the engine line closed. See "## ENGINE LIMITATION".
 - DONE in Session 9: the pass model refit on causal coverage. It is correctly specified
   and made the engine worse, and it promoted the engine's coverage error to the binding
   defect. See "Session 9 results, item 1".
@@ -1440,7 +1504,7 @@ REPORT BOTH EVEN IF THE PASS COUNT BARELY MOVES. The decomposition says the bran
 1.46x and lap counts 1.77x, so a correct fix here cannot close the miss on its own.
 
 Do NOT hunt the 0 to 0.5 bin further without a mechanism to test (user decision, Session 7).
-Finding 1 stays open with the mechanism unidentified.
+SUPERSEDED: Session 12 identified the mechanism without a run and closed the line.
 
 ### 2. Expand the holdout
 The decision path is n = 1: one real neutralisation (2025 US VSC lap 7) across four holdout
