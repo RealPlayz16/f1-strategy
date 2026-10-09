@@ -2,6 +2,7 @@ import json
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from src.optimizer import (
     BIG,
@@ -12,7 +13,7 @@ from src.optimizer import (
     plan_time,
     solve,
 )
-from src.rules import MAX_STINT_LAPS, strategy_violations
+from src.rules import MAX_STINT_LAPS, MIN_STINTS_FOR_LIMIT, strategy_violations
 from src.rules import Stint as RuleStint
 
 
@@ -176,3 +177,33 @@ def test_without_the_limit_the_same_race_would_be_illegal():
         prev, comp = lap, stops[lap]
     stints.append(RuleStint(comp, race_laps - prev))
     assert strategy_violations(stints, race_laps, tyre_limit_laps=limit) != []
+
+
+def _race_frame(season: int, event: str, limit: int = 25) -> pd.DataFrame:
+    """One race's laps with an equal per-compound max stint, so a limit is identifiable."""
+    rows = []
+    for ci, comp in enumerate(("HARD", "MEDIUM")):
+        for d in range(MIN_STINTS_FOR_LIMIT):
+            for lap in range(1, limit + 1):
+                rows.append({"season": season, "round": 1, "event": event,
+                             "driver": f"D{ci}{d}", "stint": 1, "lap": lap, "compound": comp})
+    return pd.DataFrame(rows)
+
+
+def test_race_tyre_limit_refuses_a_holdout_race():
+    """Enforced, not documented: a comment saying 'train only' holds until someone calls it."""
+    from src.optimizer import HoldoutLeak, race_tyre_limit
+    splits = {(2025, "Train Event"): "train", (2025, "Holdout Event"): "holdout"}
+    assert race_tyre_limit(_race_frame(2025, "Train Event Grand Prix"), splits) == 25
+    with pytest.raises(HoldoutLeak, match="holdout"):
+        race_tyre_limit(_race_frame(2025, "Holdout Event Grand Prix"), splits)
+
+
+def test_race_tyre_limit_refuses_more_than_one_race():
+    from src.optimizer import HoldoutLeak, race_tyre_limit
+    splits = {(2025, "A"): "train", (2025, "B"): "train"}
+    a = _race_frame(2025, "A Grand Prix")
+    b = _race_frame(2025, "B Grand Prix")
+    b["round"] = 2
+    with pytest.raises(HoldoutLeak, match="exactly one race"):
+        race_tyre_limit(pd.concat([a, b], ignore_index=True), splits)

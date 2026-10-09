@@ -64,9 +64,10 @@ def detect_tyre_limit(max_laps_by_compound: dict[str, int]) -> int | None:
     TWO LIMITS OF THIS IDENTIFICATION, both of which make it an UPPER BOUND:
     - it is the longest stint anyone actually ran, and nobody is obliged to run to the limit,
       so the true regulatory figure can only be this or higher;
-    - it reads the race's own laps, so it must NEVER be used on a holdout race. Doing that
-      would take the limit from data the holdout is supposed to withhold. For a holdout race
-      the limit has to come from the regulations instead.
+    - it reads the race's own laps, so it must NEVER be used on a holdout race: that would
+      take the limit from data the holdout exists to withhold. ENFORCED, not merely stated,
+      in optimizer.race_tyre_limit, which raises HoldoutLeak on any race splits.py does not
+      put in train. A holdout race needs its limit from the regulations, passed explicitly.
     """
     caps = {c: int(n) for c, n in max_laps_by_compound.items()}
     if len(caps) < 2:

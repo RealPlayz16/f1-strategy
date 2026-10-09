@@ -992,8 +992,14 @@ teams could pit under a real neutralisation is not what produces the disagreemen
   invisible only because a decision lap of 10 drops that race for lack of an anchor, which is
   correctness supplied by luck.
   TWO LIMITS, both making it an upper bound: it is the longest stint anyone actually ran and
-  nobody must run to the limit, and it reads the race's own laps so it must NEVER be used on a
-  holdout race. A holdout race needs its limit from the regulations instead.
+  nobody must run to the limit, and it reads the race's own laps so it must never be used on a
+  holdout race. THAT SECOND ONE IS ENFORCED, NOT DOCUMENTED. optimizer.race_tyre_limit raises
+  HoldoutLeak on any race splits.py does not put in train, and on a frame holding more than
+  one race, where "the race's own laps" has no meaning and the answer would silently pool
+  them. A comment saying "train only" stays true exactly until someone calls it; this is the
+  only place in the pipeline that reads one race's laps to produce a parameter, so it is the
+  only place the rule cannot be enforced by filtering upstream. A holdout race needs its limit
+  from the regulations, passed explicitly.
 - NO Monte Carlo over SC timing, rival strategies or lap-time noise (Session 4 brief), and
   by user decision in Session 9 it is NOT the next thing to build: the objective has no
   traffic term for the largest known bias to act on, so more SC scenarios would add precision

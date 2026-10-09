@@ -57,7 +57,7 @@ from src.rules import (
     MIN_STINTS_FOR_LIMIT,
     detect_tyre_limit,
 )
-from src.splits import add_split
+from src.splits import add_split, split_of
 from src.tyre import compute_anchors, predict_laptime
 
 LAPS_PATH = Path("data/processed/laps_fuel_corrected.parquet")
@@ -83,9 +83,36 @@ def stint_caps(tyre_limit: int | None) -> dict[str, int]:
     return {c: min(n, tyre_limit) for c, n in MAX_STINT_LAPS.items()}
 
 
-def race_tyre_limit(race_laps_df: pd.DataFrame) -> int | None:
-    """Identify a per-set lap limit from one race's own laps. Train races only; see
-    rules.detect_tyre_limit for why this must not touch a holdout race."""
+class HoldoutLeak(RuntimeError):
+    """Raised when a fit or a fitted parameter would be taken from a holdout race."""
+
+
+def race_tyre_limit(race_laps_df: pd.DataFrame,
+                    splits: dict[tuple[int, str], str] | None = None) -> int | None:
+    """Identify a per-set lap limit from one race's OWN laps.
+
+    REFUSES on a holdout race rather than documenting that it should not be called on one.
+    This is the only place in the pipeline that reads a single race's laps to produce a
+    parameter, so it is the only place where "train only" cannot be enforced by filtering
+    upstream, and a comment saying so stays true exactly until someone calls it. It stops
+    instead of guessing, like the fuel gate.
+
+    Also refuses a frame holding more than one race, where "the race's own laps" has no
+    meaning and the answer would silently pool them.
+    """
+    races = race_laps_df[["season", "round"]].drop_duplicates()
+    if len(races) != 1:
+        raise HoldoutLeak(
+            f"race_tyre_limit needs exactly one race, got {len(races)}: "
+            f"{sorted(map(tuple, races.to_numpy()))[:5]}")
+    season = int(race_laps_df["season"].iloc[0])
+    event = str(race_laps_df["event"].iloc[0])
+    split = split_of(season, event, splits)
+    if split != "train":
+        raise HoldoutLeak(
+            f"refusing to identify a tyre limit from {season} {event}, which splits.py puts "
+            f"in '{split}'. The limit would come from laps the holdout exists to withhold. "
+            f"For a holdout race take the limit from the regulations and pass it explicitly.")
     st = race_laps_df.groupby(["driver", "stint"]).agg(
         laps=("lap", "size"), comp=("compound", "first"))
     per = st.groupby("comp")["laps"].agg(["size", "max"])
