@@ -78,6 +78,13 @@ to the same number must agree. Mechanism tests would not have caught any of the 
   route. When a quantity has only one measurement, that is a gap in the method, not a sign
   the quantity is fine.
 
+### A PROCESS GAP, not a defect: pushing is not verifying
+Session 8's a52de6b went out without pytest being run, CI caught it, and the next commit
+fixed it for unrelated reasons, so it sat red in the history unnoticed until the Session 11
+verification pass looked. The standing instruction was "push after each commit" and it was
+followed every time; nothing in it said "check it went green", so nothing did. An instruction
+to act is not an instruction to confirm the action worked. History left as it is.
+
 ## ENGINE LIMITATION: what the engine can and cannot be trusted for
 
 Read this before using the engine for anything. Sessions 4, 7 and 8 all feed it and it has
