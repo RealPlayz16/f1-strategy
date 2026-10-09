@@ -138,10 +138,16 @@ def compute_anchors(laps: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def build_frame(laps: pd.DataFrame) -> pd.DataFrame:
-    """(anchor, horizon) rows for train races: features at t, tyre plan and target at t + h."""
+def build_frame(laps: pd.DataFrame, split: str = "train") -> pd.DataFrame:
+    """(anchor, horizon) rows: features at t, tyre plan and target at t + h.
+
+    `split` selects which races to build rows for. It defaults to train and every fit in this
+    module uses that default; src/tyre_holdout.py passes "holdout" for the single terminal
+    scoring pass. Building rows is descriptive, not a fit: anchors are within-race medians
+    available live, and y is the observed lap time.
+    """
     laps = add_split(laps.drop(columns=["split"], errors="ignore"))
-    c = laps[laps["is_clean"] & (laps["split"] == "train")].copy()
+    c = laps[laps["is_clean"] & (laps["split"] == split)].copy()
     if c.empty:
         return pd.DataFrame(columns=FEATURES + ["y", "race", "h"])
     anchors = compute_anchors(c)

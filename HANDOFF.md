@@ -27,6 +27,9 @@ triggers. Delivered with a pit-wall dashboard and an Arduino "BOX" pit board.
 9. Pass model refit on causal coverage (DONE, correctly specified, makes the engine
    worse, kept); DP optimizer built and run end to end (DONE, first strategy
    recommendation in the project; stop count robust, compound choice is not)
+10. Tyre model scored on the holdout, one terminal pass of the frozen model (DONE).
+    Below p10 18.4% against 10.7% in CV, a ONE-SIDED miss; MAE 0.665 against 0.506.
+    Three of five pre-stated predictions wrong. Nothing retuned afterward.
 
 ## Working style
 - Minimal explanation, direct bullets, step-by-step commands
@@ -906,6 +909,98 @@ README (what a reviewer opens first):
   measured, soft p50 bias, h=30 floor, pass model over-predicts on unseen tracks.
 
 Carries: none of the Session 4 optimizer work exists; do not demo strategy rankings.
+
+## Session 10: the tyre model scored on the holdout, once
+
+### THE RULING (user decision, recorded so the reasoning survives)
+A single terminal evaluation of a frozen model on the holdout is NOT contamination. The rule
+exists to stop the holdout influencing FITS, and one scoring pass with no tuning afterward
+does not. What would be contamination is refitting, reseeding, changing a threshold or a
+feature because of what came back, or tuning anything downstream of it. None of that happened.
+Enforced rather than promised: src/tyre_holdout.py is a separate module with no code path that
+fits anything, it loads the saved artefacts through tyre.load_final, it refuses if they are
+missing instead of falling back to a fit, and it records their SHA-256 in its own output so
+"frozen" is verifiable afterwards (tyre_lgb.txt 9de61710755de812, tyre_model.pt
+05fec8828c8ca32c). Scored through the same tyre.calibration on the same y, so the numbers are
+comparable to the train CV figures.
+
+### Result: 9 holdout races, 62818 rows, one pass
+                     holdout    train CV    reading
+  below p10            18.4%       10.7%    much worse
+  above p90            10.7%       10.2%    UNCHANGED
+  median residual     -0.099 s    +0.009 s  sign flipped, model now runs SLOW
+  MAE p50              0.665 s     0.506 s  +31%
+  race offset sd       0.174       0.168    unchanged
+  quantile crossing    0.0011
+By horizon, below p10 / MAE: h=1 15.1% / 0.446, h=5 19.5% / 0.636, h=15 19.2% / 0.813,
+h=30 20.9% / 0.902. Degradation grows with horizon, as in CV, but from a worse base.
+
+THE MISS IS ONE-SIDED AND THAT IS THE FINDING. The intervals are not uniformly too narrow:
+the upper tail is calibrated (10.7% against a 10% target) and only the lower tail is blown.
+Together with a median residual of -0.099 that says the frozen model predicts lap times about
+a tenth SLOWER than the holdout actually ran, so reality keeps falling out of the bottom of
+the interval. An interval problem and a location problem look the same in a pooled miss rate
+and are not the same thing.
+
+### Where the degradation comes from, decomposed
+  train CV, all seasons          10.7% below p10
+  train CV, 2025 rows only       12.9%     the model was ALREADY worse on 2025 in CV
+  holdout, excluding Monaco      15.6%     out-of-sample cost
+  holdout, all 9 races           18.4%     Monaco alone
+2025 was already the worst season inside CV (below p10 12.9% against 9.2% for 2023 and 9.4%
+for 2024) and the holdout is 100% 2025, so part of this is season composition and not
+generalisation at all. MONACO IS THE WORST RACE BY A WIDE MARGIN: MAE 1.374 s against 0.542
+for the other eight together, with both tails blown (34.8% below, 24.3% above). Excluding it
+is a DIAGNOSTIC, not a corrected result: the reported figure is 18.4% and 0.665.
+Four of the nine races are essentially calibrated: Canadian 10.2 / 8.0, United States 9.4 /
+11.0, Mexico City 10.0 / 6.7, Abu Dhabi 8.9 / 9.3. Japanese is the other bad one, 34.4% below
+p10 with a residual of -0.424, one-sided rather than wide.
+
+### PREDICTIONS STATED BEFORE THE RUN: three of five wrong
+1. WRONG. I predicted below p10 and above p90 would both land at 12 to 16%. Below p10 came in
+   at 18.4%, above my range, and above p90 at 10.7%, inside CV. I predicted a symmetric
+   degradation and it is one-sided, which is the most informative thing here and I had the
+   shape wrong, not just the size.
+2. WRONG. I predicted race_offset_sd would rise above 0.168 because the spread net is
+   deliberately blind to between-race variance. It is 0.174. Unchanged.
+3. RIGHT. MAE 0.55 to 0.70; it is 0.665.
+4. PARTLY WRONG. I predicted unseen tracks would drive the degradation. The median error is
+   clearly worse there (MAE 0.725 unseen against 0.524 seen) but the interval miss is not
+   (18.8% below unseen against 17.6% seen). The cut was fixed before the run precisely so this
+   could not be re-read afterwards, and it says my mechanism explains the MAE and not the
+   calibration.
+5. PARTLY RIGHT, see below.
+
+### The horizon-shaped bias holds out of sample, and the Session 9 spec is the wrong size
+This was the first chance to test the CV-measured bias out of sample.
+              CV h=30     holdout h=30
+    HARD       -0.020        -0.263
+    MEDIUM     +0.087        +0.175
+    SOFT       +0.091        +0.029
+The qualitative claim HOLDS and strengthens: MEDIUM runs positive, HARD negative, and the
+HARD-to-MEDIUM spread at h=30 is 0.438 s out of sample against 0.107 s in CV, four times
+larger. The SOFT part does NOT hold, collapsing to +0.029.
+
+SO THE SESSION 9 SENSITIVITY SPEC IS MIS-SPECIFIED ON ALL THREE COMPOUNDS out of sample.
+live.P50_BIAS_LONG_H_S adds +0.09 to MEDIUM and SOFT beyond h = 15 and nothing to HARD. The
+holdout says MEDIUM wants roughly double that, SOFT roughly a third of it, and HARD wants a
+large NEGATIVE term it currently does not get.
+I HAVE NOT CHANGED IT, and changing it is exactly the tuning this pass forbids. It is also a
+decision rather than an edit: a sensitivity knob re-derived from the holdout would make every
+downstream sensitivity a function of holdout data, which is the contamination the ruling
+above carves out an exception to, not an extension of it. Needs an explicit call.
+
+### The gap is NARROWED, NOT CLOSED
+Scored on the holdout now: the tyre model, once. Everything else still never has been.
+  - the race engine and its following model: train-race replay only
+  - the pass model: pass_oof is train only, so its calibration on the holdout is unmeasured,
+    including the unseen-track over-prediction that is its largest known error
+  - the DP optimizer: train races only
+  - dirty air d0 and the aero curve: fitted on train, never scored out of sample
+  - fuel K, degradation slopes, SC rates: train only
+  - pit loss: holdout races have no pitloss row at all, by construction
+  - the live decision path IS scored on the holdout, but the real-call part is capped at n=1
+    by Fast Flag timeline coverage, which no work here can raise. See "## VALIDATION CEILING".
 
 ## Session 9 results, item 2 (done): the DP optimizer runs, and what it is worth
 
