@@ -23,7 +23,10 @@ triggers. Delivered with a pit-wall dashboard and an Arduino "BOX" pit board.
    identified and split between the engine and the pass model. See Session 7 results.)
 8. free_missing routing (DONE, misses its own criterion in 1 of 4 bins, does not fix the
    engine, kept for correctness); race set 27 -> 38 and full rebuild (DONE); Session 5
-   backtest on the larger holdout NOT re-run
+   backtest re-run on the 9-race holdout (DONE)
+9. Pass model refit on causal coverage (DONE, correctly specified, makes the engine
+   worse, kept); DP optimizer built and run end to end (DONE, first strategy
+   recommendation in the project; stop count robust, compound choice is not)
 
 ## Working style
 - Minimal explanation, direct bullets, step-by-step commands
@@ -903,6 +906,75 @@ README (what a reviewer opens first):
   measured, soft p50 bias, h=30 floor, pass model over-predicts on unseen tracks.
 
 Carries: none of the Session 4 optimizer work exists; do not demo strategy rankings.
+
+## Session 9 results, item 2 (done): the DP optimizer runs, and what it is worth
+
+src/optimizer.py. The first actual strategy recommendation the project has produced. Exact DP,
+no heuristics, 458 car-races over 28 of the 29 train races, from DECISION_LAP = 10 to the flag.
+READ THE MODULE DOCSTRING BEFORE ANY NUMBER HERE: it prices traffic, overtaking, track
+position and rivals' reactions at ZERO, and plans on green pit loss.
+
+### Results
+                                      measured   neutralised   actual
+  stop-count agreement with the team     69.1%        69.1%
+  optimiser stops / actual stops          1.36         1.33      1.61
+  modelled gain over the team's plan    2.5 s        2.7 s
+    p10 / p90                        0.3 / 12.9   0.2 / 14.1
+  no-neutralisation subset (169 car-races, 10 races): agreement 69.2%, gain median 2.9 s
+"neutralised" = tyre p50 + 0.09 s on MEDIUM and SOFT beyond h = 15, the Session 8 spec.
+14 of 458 car-races are not comparable: the team's actual plan is not scorable under the model
+(a stint or tyre age outside the grid). 2025 Qatar is dropped entirely because NO car has an
+anchor at lap 10 there, anchors existing at lap 6 and then from lap 12.
+
+### TAKE 1: the model thinks teams were within about 2.5 s of free-air optimal
+Over roughly 50 remaining laps, median 2.5 s, p90 12.9 s. That is a small number and it is the
+most believable thing here. It says the free-air part of strategy, which is all this optimizer
+sees, is close to solved by the teams, and that whatever separates a good strategy call from a
+bad one lives in the part the optimizer prices at zero. An optimizer that found 30 s lying
+around would have been evidence against itself.
+
+### TAKE 2: stop COUNT is robust to the bias knob, COMPOUND CHOICE IS NOT
+Stop count barely moves when the knob is neutralised (1.36 -> 1.33, agreement identical at
+69.1%), but 63.3% of plans change, and the compounds swing violently:
+                      HARD   SOFT   MEDIUM
+  optimiser measured   295    224      102      HARD 47% of stops
+  optimiser neutralised 530     55       26      HARD 87%
+  what teams actually ran 404    122      199      HARD 56%
+The reason is mechanical: the Session 8 bias is HORIZON shaped and spares HARD, so penalising
+MEDIUM and SOFT beyond h = 15 penalises most of a plan's laps on two of three compounds and
+hands the race to HARD. THE TWO RUNS BRACKET, NEITHER IS THE ANSWER. Compound recommendations
+from this optimizer are not trustworthy and should not be quoted; the stop count is the only
+part of its output that survives its own sensitivity.
+Note also that the measured run over-picks SOFT against the teams (224 against 122) and
+under-picks MEDIUM (102 against 199), which is the direction the old soft-bias story predicted
+even though that bias is now measured much smaller.
+
+### TAKE 3: the Session 4 bias comparison answers NEGATIVE
+The brief said to run the comparison with the knobs measured and neutralised, because "the
+part of the gap that closes is attributable to our bias". Nothing closes. The gain widens
+slightly (2.5 -> 2.7 s) and stop-count agreement is identical. The tyre p50 bias is not what
+separates the optimizer from the teams.
+And the biases that most likely do are the ones that CANNOT BE SWEPT HERE. The pass model is
+21% high overall and about 74% high at unseen tracks, and this objective has no traffic term
+for either knob to act on. So the bias sweep the brief specified is incomplete by construction,
+not by omission: an optimizer that ignores overtaking cannot be made sensitive to the error in
+its overtaking model, while still emitting plans that need overtaking.
+
+### Also not driven by the Safety Car confound
+The no-neutralisation subset (10 races with no SC or VSC at all) gives 69.2% agreement and a
+2.9 s median gain, against 69.1% and 2.5 s on everything. So planning on green pit loss while
+teams could pit under a real neutralisation is not what produces the disagreement either.
+
+### Gaps in the optimizer itself, recorded not fixed
+- NO tyre_limit_laps. rules.strategy_violations supports a per-set lap limit (2023 Qatar) and
+  the optimizer never passes one, so on a race with such a limit it would emit illegal plans.
+  No illegal plan was emitted here only because the one Qatar race in train is dropped for
+  lack of an anchor. Close this before running the optimizer on a limited-set race.
+- NO Monte Carlo over SC timing, rival strategies or lap-time noise (Session 4 brief). The
+  headline is a single deterministic plan per car on green pit loss.
+- The decision lap is fixed at 10 and drops any race without an anchor there.
+- h > 30 intervals are a floor, and about 40% of plan laps sit beyond h = 30, so the p50 the
+  DP minimises is least reliable exactly where most of the plan lives.
 
 ## Session 9 results, item 1 (done): pass model refit on causal coverage
 
