@@ -145,6 +145,73 @@ plans' errors (P(pit better) is reported at three values instead); tyre interval
 laps ahead, which are a floor. On the real VSC, every car's answer was "overlapping: the
 model cannot separate the two plans", and the system reports that rather than picking a side.
 
+## The headline: teams were within about 2.5 seconds of optimal
+
+The DP optimizer plans the rest of a race from lap 10 and compares its choice with what the
+team actually did, over 458 car-races on 28 training races. The model's verdict is that the
+teams left a **median of 2.5 seconds** on the table across roughly fifty remaining laps (p90
+12.9 s), and it agreed with their number of pit stops 69% of the time.
+
+That small number is the believable one, and the reason is worth stating plainly: **an
+optimiser that found 30 seconds lying around would have been evidence against itself.** Real
+F1 strategists are extremely good at the part of this problem that can be written down. A
+model claiming otherwise would be describing its own errors, not their mistakes. What the
+result actually says is that the free-air part of strategy is close to solved, so whatever
+separates a good call from a bad one lives in the part this optimizer cannot see.
+
+### The 2.5 s is an upper bound on the free-air component only
+
+This is not a caveat sitting beside the known biases. It inverts them.
+
+Every earlier stage of this project worried that the optimizer would favour strategies needing
+overtaking, because the pass model predicts about 21% too many passes overall and about 74%
+too many at tracks it has not seen. The optimizer prices traffic, overtaking and track
+position at **zero**, and pricing passing as free *is that same bias at infinite strength*.
+So the worry has not been managed, it has been maximised.
+
+Two consequences follow, and both bound the headline:
+
+- The 2.5 s is an upper bound on the **free-air** gap, not on the real one. A plan that gains
+  time by stopping into traffic has that cost counted as nothing.
+- It says nothing at all about whether those plans are **executable**. The optimizer cannot
+  tell a plan that works from one that needs three passes it would never complete.
+
+It is also why the bias sweep the design called for is incomplete *by construction* rather
+than by omission: an objective with no traffic term gives the overtaking-bias knob nothing to
+act on, while still emitting overtake-dependent plans.
+
+### A recommendation made, then withdrawn by its own sensitivity
+
+The optimizer's **stop count** is stable: neutralising the tyre model's known p50 bias moves
+it from 1.36 to 1.33 stops per car and leaves stop-count agreement identical at 69.1%.
+
+Its **compound choice is not**, and the sensitivity run is the only reason anyone knows:
+
+| | HARD | SOFT | MEDIUM |
+|---|---|---|---|
+| optimiser, measured knobs | 295 (47%) | 224 | 102 |
+| optimiser, bias neutralised | **530 (87%)** | 55 | 26 |
+| what teams actually ran | 404 (56%) | 122 | 199 |
+
+63% of plans change, and the HARD share nearly doubles. The cause is mechanical: the tyre
+bias is horizon-shaped and spares HARD, so penalising MEDIUM and SOFT beyond fifteen laps
+ahead penalises most of a plan on two of the three compounds. **The two runs bracket; neither
+is the answer.** The compound recommendation was produced, tested against its own stated
+uncertainty, and withdrawn on that evidence. Without the sensitivity run it would have shipped
+as a result, and it would have looked like one.
+
+### A premise stated in advance, and refuted
+
+The design said to run the comparison twice, with the bias knobs at measured values and
+neutralised, on the reasoning that *the part of the gap that closes under neutralisation is
+attributable to our bias*. Nothing closed. The gap widened slightly, 2.5 s to 2.7 s, and
+stop-count agreement was identical to the tenth of a percent. The tyre bias is not what
+separates this optimizer from the teams.
+
+That is the second prediction this project has written down in advance and then refuted with
+its own data; the first is in the section above on how analysis bugs surfaced. Both are kept
+in the record, because a prediction that fails tells you more than one that lands.
+
 ## Honest limitations
 
 - **The 20-car race engine failed validation** (Session 4). It does not reproduce how cars

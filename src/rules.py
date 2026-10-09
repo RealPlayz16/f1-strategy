@@ -45,6 +45,41 @@ class Stint:
     laps: int
 
 
+MIN_STINTS_FOR_LIMIT = 5
+
+
+def detect_tyre_limit(max_laps_by_compound: dict[str, int]) -> int | None:
+    """A mandatory per-set lap limit (2023 Qatar had one), identified FROM DATA.
+
+    The signature is regulatory rather than physical: every compound's longest stint lands on
+    the SAME number, and below the smallest global cap. Degradation cannot do that, since it
+    bites each compound differently, and the contrast is clear in the train set: 2025 Qatar has
+    HARD 25 and MEDIUM 25, while every other race differs by 2 to 7 laps between compounds
+    (2023 British HARD 32 / MEDIUM 33 / SOFT 28, 2023 Hungarian HARD 38 / MEDIUM 40). Over 29
+    train races exactly one fires.
+
+    Pass the per-compound maximum observed stint length, counting only compounds with at least
+    MIN_STINTS_FOR_LIMIT stints so one outlier set cannot define the limit.
+
+    TWO LIMITS OF THIS IDENTIFICATION, both of which make it an UPPER BOUND:
+    - it is the longest stint anyone actually ran, and nobody is obliged to run to the limit,
+      so the true regulatory figure can only be this or higher;
+    - it reads the race's own laps, so it must NEVER be used on a holdout race. Doing that
+      would take the limit from data the holdout is supposed to withhold. For a holdout race
+      the limit has to come from the regulations instead.
+    """
+    caps = {c: int(n) for c, n in max_laps_by_compound.items()}
+    if len(caps) < 2:
+        return None
+    values = set(caps.values())
+    if len(values) != 1:
+        return None
+    limit = values.pop()
+    if limit >= min(MAX_STINT_LAPS.values()):
+        return None
+    return limit
+
+
 def strategy_violations(stints: list[Stint], race_laps: int,
                         tyre_limit_laps: int | None = None) -> list[str]:
     """Empty list if the plan is legal and viable, otherwise one message per problem."""

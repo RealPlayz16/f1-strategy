@@ -930,8 +930,19 @@ anchor at lap 10 there, anchors existing at lap 6 and then from lap 12.
 Over roughly 50 remaining laps, median 2.5 s, p90 12.9 s. That is a small number and it is the
 most believable thing here. It says the free-air part of strategy, which is all this optimizer
 sees, is close to solved by the teams, and that whatever separates a good strategy call from a
-bad one lives in the part the optimizer prices at zero. An optimizer that found 30 s lying
-around would have been evidence against itself.
+bad one lives in the part the optimizer prices at zero. AN OPTIMIZER THAT FOUND 30 S LYING
+AROUND WOULD HAVE BEEN EVIDENCE AGAINST ITSELF.
+
+TRAFFIC AT ZERO IS NOT A CAVEAT BESIDE THE BIAS KNOBS, IT INVERTS THEM. Read this with the
+number, not in a gaps list. Every session from 4 onward worried that the optimizer would
+favour overtaking-dependent strategies because the pass model runs about 21% high overall and
+about 74% high at unseen tracks. Pricing passing as FREE is that same bias at INFINITE
+STRENGTH. The worry was not managed, it was maximised. So:
+  - the 2.5 s is an upper bound on the FREE-AIR component of the gap, never on the real one;
+    a plan that gains time by stopping into traffic has that cost counted as nothing;
+  - it says NOTHING about whether those plans are EXECUTABLE. The optimizer cannot distinguish
+    a plan that works from one needing three passes it would never complete.
+Quote the 2.5 s only with that attached.
 
 ### TAKE 2: stop COUNT is robust to the bias knob, COMPOUND CHOICE IS NOT
 Stop count barely moves when the knob is neutralised (1.36 -> 1.33, agreement identical at
@@ -942,9 +953,13 @@ Stop count barely moves when the knob is neutralised (1.36 -> 1.33, agreement id
   what teams actually ran 404    122      199      HARD 56%
 The reason is mechanical: the Session 8 bias is HORIZON shaped and spares HARD, so penalising
 MEDIUM and SOFT beyond h = 15 penalises most of a plan's laps on two of three compounds and
-hands the race to HARD. THE TWO RUNS BRACKET, NEITHER IS THE ANSWER. Compound recommendations
-from this optimizer are not trustworthy and should not be quoted; the stop count is the only
-part of its output that survives its own sensitivity.
+hands the race to HARD. THE TWO RUNS BRACKET, NEITHER IS THE ANSWER.
+THE COMPOUND RECOMMENDATION WAS MADE, TESTED AGAINST ITS OWN STATED UNCERTAINTY, AND WITHDRAWN
+ON THAT EVIDENCE. It was not left unmade out of caution. The sensitivity run is the only
+reason anyone knows it is unstable: a single pass at the measured knobs produces HARD 47% /
+SOFT 36% / MEDIUM 16%, which is close enough to what teams ran (56 / 17 / 27) to look like a
+result and would have shipped as one. The stop count is the only part of the output that
+survives its own sensitivity, and it is the only part that may be quoted.
 Note also that the measured run over-picks SOFT against the teams (224 against 122) and
 under-picks MEDIUM (102 against 199), which is the direction the old soft-bias story predicted
 even though that bias is now measured much smaller.
@@ -966,12 +981,24 @@ The no-neutralisation subset (10 races with no SC or VSC at all) gives 69.2% agr
 teams could pit under a real neutralisation is not what produces the disagreement either.
 
 ### Gaps in the optimizer itself, recorded not fixed
-- NO tyre_limit_laps. rules.strategy_violations supports a per-set lap limit (2023 Qatar) and
-  the optimizer never passes one, so on a race with such a limit it would emit illegal plans.
-  No illegal plan was emitted here only because the one Qatar race in train is dropped for
-  lack of an anchor. Close this before running the optimizer on a limited-set race.
-- NO Monte Carlo over SC timing, rival strategies or lap-time noise (Session 4 brief). The
-  headline is a single deterministic plan per car on green pit loss.
+- CLOSED in Session 9: per-set lap limits. The limit is now IDENTIFIED FROM DATA by
+  rules.detect_tyre_limit, which looks for the regulatory signature rather than the physical
+  one: every compound's longest stint landing on the SAME number, below the smallest global
+  cap. Degradation cannot do that, as it bites each compound differently. Over 29 train races
+  exactly one fires, 2025 Qatar at 25 laps (HARD 25, MEDIUM 25), against every other race
+  differing by 2 to 7 laps between compounds.
+  THE GAP WAS SEVERE, NOT MARGINAL. Verified end to end on 2025 Qatar at decision lap 12:
+  without the limit 16 of 17 cars get plans that break it, with the limit zero do. It was
+  invisible only because a decision lap of 10 drops that race for lack of an anchor, which is
+  correctness supplied by luck.
+  TWO LIMITS, both making it an upper bound: it is the longest stint anyone actually ran and
+  nobody must run to the limit, and it reads the race's own laps so it must NEVER be used on a
+  holdout race. A holdout race needs its limit from the regulations instead.
+- NO Monte Carlo over SC timing, rival strategies or lap-time noise (Session 4 brief), and
+  by user decision in Session 9 it is NOT the next thing to build: the objective has no
+  traffic term for the largest known bias to act on, so more SC scenarios would add precision
+  to a quantity whose main limitation is structural. Revisit only if the engine ever carries
+  traffic.
 - The decision lap is fixed at 10 and drops any race without an anchor there.
 - h > 30 intervals are a floor, and about 40% of plan laps sit beyond h = 30, so the p50 the
   DP minimises is least reliable exactly where most of the plan lives.

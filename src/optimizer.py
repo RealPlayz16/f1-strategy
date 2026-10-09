@@ -51,7 +51,12 @@ import numpy as np
 import pandas as pd
 
 from src.live import P50_BIAS_LONG_H_S, P50_BIAS_MIN_H
-from src.rules import DRY_COMPOUNDS, MAX_STINT_LAPS
+from src.rules import (
+    DRY_COMPOUNDS,
+    MAX_STINT_LAPS,
+    MIN_STINTS_FOR_LIMIT,
+    detect_tyre_limit,
+)
 from src.splits import add_split
 from src.tyre import compute_anchors, predict_laptime
 
@@ -69,10 +74,30 @@ COMPOUNDS = list(DRY_COMPOUNDS)
 C_IX = {c: i for i, c in enumerate(COMPOUNDS)}
 
 
+def stint_caps(tyre_limit: int | None) -> dict[str, int]:
+    """Per-compound stint cap, tightened by a mandatory per-set lap limit if the race has
+    one. Without this the DP happily proposes a 46-lap MEDIUM stint at a race where the
+    longest set anyone ran was 25 laps, and rules.strategy_violations would reject it."""
+    if tyre_limit is None:
+        return dict(MAX_STINT_LAPS)
+    return {c: min(n, tyre_limit) for c, n in MAX_STINT_LAPS.items()}
+
+
+def race_tyre_limit(race_laps_df: pd.DataFrame) -> int | None:
+    """Identify a per-set lap limit from one race's own laps. Train races only; see
+    rules.detect_tyre_limit for why this must not touch a holdout race."""
+    st = race_laps_df.groupby(["driver", "stint"]).agg(
+        laps=("lap", "size"), comp=("compound", "first"))
+    per = st.groupby("comp")["laps"].agg(["size", "max"])
+    per = per[per["size"] >= MIN_STINTS_FOR_LIMIT]
+    return detect_tyre_limit(per["max"].to_dict())
+
+
 # ---------- lap time table ----------
 
 def lap_time_grid(base: dict, decision_lap: int, race_laps: int, age_now: float,
-                  p50_bias_s: float = 0.0) -> np.ndarray:
+                  p50_bias_s: float = 0.0,
+                  tyre_limit: int | None = None) -> np.ndarray:
     """lt[h, compound, age, stops]: modelled p50 lap time for lap decision_lap + h run on
     `compound` at `age`, having made `stops` stops since the decision lap. BIG where the
     combination is unreachable or breaks a stint cap.
@@ -81,12 +106,13 @@ def lap_time_grid(base: dict, decision_lap: int, race_laps: int, age_now: float,
     tyre model sees the same features it was fitted on.
     """
     n_h = race_laps - decision_lap
+    caps = stint_caps(tyre_limit)
     lt = np.full((n_h + 1, len(COMPOUNDS), MAX_AGE + 1, MAX_STOPS + 1), BIG)
     rows, index = [], []
     for h in range(1, n_h + 1):
         lap = decision_lap + h
         for ci, comp in enumerate(COMPOUNDS):
-            cap = MAX_STINT_LAPS[comp]
+            cap = caps[comp]
             for stops in range(MAX_STOPS + 1):
                 if stops == 0:
                     ages = [age_now + h]            # still on the tyre it had at the decision
@@ -118,7 +144,8 @@ def lap_time_grid(base: dict, decision_lap: int, race_laps: int, age_now: float,
 
 def solve(lt: np.ndarray, decision_lap: int, race_laps: int, compound_now: str,
           age_now: float, stops_now: int, used: set[str],
-          pit_loss_by_lap: np.ndarray) -> tuple[float, dict[int, str]]:
+          pit_loss_by_lap: np.ndarray,
+          tyre_limit: int | None = None) -> tuple[float, dict[int, str]]:
     """Exact backward induction. Returns (modelled time for the remaining laps, stops made).
 
     State is (compound, tyre age, stops since the decision lap, two-compound rule satisfied),
@@ -130,7 +157,8 @@ def solve(lt: np.ndarray, decision_lap: int, race_laps: int, compound_now: str,
     n_h = race_laps - decision_lap
     n_c, n_s, n_a = len(COMPOUNDS), MAX_STOPS + 1, MAX_AGE + 1
     age_next = np.minimum(np.arange(n_a) + 1, MAX_AGE)
-    caps = np.array([MAX_STINT_LAPS[c] for c in COMPOUNDS])
+    _caps = stint_caps(tyre_limit)
+    caps = np.array([_caps[c] for c in COMPOUNDS])
     over_cap = (np.arange(n_a)[None, :] + 1) > caps[:, None]          # (compound, age)
 
     nxt = np.full((n_c, n_a, n_s, 2), BIG)
@@ -254,6 +282,10 @@ def main(argv: list[str] | None = None) -> int:
         green = float(pitloss.loc[(season, event), "green_s"])
         # GREEN everywhere: what a car knows at the decision lap. See the module docstring.
         pit_loss_by_lap = np.full(race_laps - decision_lap + 1, green)
+        tyre_limit = race_tyre_limit(race)
+        if tyre_limit is not None:
+            print(f"  {season} {event}: per-set lap limit {tyre_limit} identified from data",
+                  flush=True)
         for _, a in race_anchors.iterrows():
             drv = str(a["driver"])
             mine = race[race["driver"] == drv].sort_values("lap")
@@ -269,12 +301,15 @@ def main(argv: list[str] | None = None) -> int:
                    "compound_now": st["compound_now"], "age_now": st["age_now"],
                    "finished": st["last_lap"] >= race_laps,
                    "neutralised_race": (int(season), int(rnd)) in neutralised,
+                   "tyre_limit_laps": tyre_limit,
                    "actual_stops_n": len(st["actual_stops"]),
                    "actual_plan": json.dumps(st["actual_stops"])}
             for label, bias in (("measured", 0.0), ("neutralised", P50_BIAS_LONG_H_S)):
-                lt = lap_time_grid(base, decision_lap, race_laps, st["age_now"], bias)
+                lt = lap_time_grid(base, decision_lap, race_laps, st["age_now"], bias,
+                                   tyre_limit=tyre_limit)
                 best, stops = solve(lt, decision_lap, race_laps, st["compound_now"],
-                                    st["age_now"], 0, st["used"], pit_loss_by_lap)
+                                    st["age_now"], 0, st["used"], pit_loss_by_lap,
+                                    tyre_limit=tyre_limit)
                 act = plan_time(lt, decision_lap, race_laps, st["compound_now"],
                                 st["age_now"], st["actual_stops"], pit_loss_by_lap)
                 row[f"{label}_opt_s"] = best

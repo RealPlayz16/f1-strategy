@@ -114,3 +114,65 @@ def test_car_state_reads_the_actual_stops_after_the_decision_lap():
     assert st["used"] == {"MEDIUM"}
     assert st["actual_stops"] == {11: "HARD"}
     assert json.loads(json.dumps(st["actual_stops"])) == {"11": "HARD"}
+
+
+# ---------- per-set lap limit (2023 Qatar had one; 2025 Qatar is identified from data) ----------
+
+def test_detect_tyre_limit_fires_only_on_an_equal_cap_below_the_global_caps():
+    from src.rules import detect_tyre_limit
+    # regulatory signature: every compound lands on the same number, below the smallest cap
+    assert detect_tyre_limit({"HARD": 25, "MEDIUM": 25}) == 25
+    assert detect_tyre_limit({"HARD": 25, "MEDIUM": 25, "SOFT": 25}) == 25
+    # degradation signature: compounds differ
+    assert detect_tyre_limit({"HARD": 32, "MEDIUM": 33, "SOFT": 28}) is None
+    assert detect_tyre_limit({"HARD": 38, "MEDIUM": 40}) is None
+    # equal but not below the smallest global cap, so not a limit
+    assert detect_tyre_limit({"HARD": 28, "MEDIUM": 28}) is None
+    # a single compound cannot identify anything
+    assert detect_tyre_limit({"HARD": 25}) is None
+
+
+def test_stint_caps_tighten_to_the_limit():
+    from src.optimizer import stint_caps
+    assert stint_caps(None) == MAX_STINT_LAPS
+    assert stint_caps(25) == {"SOFT": 25, "MEDIUM": 25, "HARD": 25}
+    assert stint_caps(60) == MAX_STINT_LAPS      # a limit above every cap changes nothing
+
+
+def test_a_limited_set_race_produces_legal_plans():
+    """The gap closed in Session 9: without the limit the DP proposes a 46-lap MEDIUM stint at
+    a race where no set ran past 25, and rules.strategy_violations rejects it."""
+    limit, decision_lap, race_laps = 25, 10, 57
+    n_h = race_laps - decision_lap
+    lt = np.full((n_h + 1, len(COMPOUNDS), MAX_AGE + 1, MAX_STOPS + 1), BIG)
+    for h in range(1, n_h + 1):
+        for ci, comp in enumerate(COMPOUNDS):
+            lt[h, ci, : min(MAX_STINT_LAPS[comp], limit) + 1, :] = 90.0
+    total, stops = solve(lt, decision_lap, race_laps, "MEDIUM", float(decision_lap), 0,
+                         {"MEDIUM"}, np.zeros(n_h + 1), tyre_limit=limit)
+    assert np.isfinite(total)
+    stints, prev, comp = [], 0, "MEDIUM"
+    for lap in sorted(stops):
+        stints.append(RuleStint(comp, lap - prev))
+        prev, comp = lap, stops[lap]
+    stints.append(RuleStint(comp, race_laps - prev))
+    assert all(s.laps <= limit for s in stints), stints
+    assert strategy_violations(stints, race_laps, tyre_limit_laps=limit) == []
+
+
+def test_without_the_limit_the_same_race_would_be_illegal():
+    """Shows the gap was real, not hypothetical: correctness was being supplied by luck."""
+    limit, decision_lap, race_laps = 25, 10, 57
+    n_h = race_laps - decision_lap
+    lt = np.full((n_h + 1, len(COMPOUNDS), MAX_AGE + 1, MAX_STOPS + 1), BIG)
+    for h in range(1, n_h + 1):
+        for ci, comp in enumerate(COMPOUNDS):
+            lt[h, ci, : MAX_STINT_LAPS[comp] + 1, :] = 90.0
+    _, stops = solve(lt, decision_lap, race_laps, "MEDIUM", float(decision_lap), 0,
+                     {"MEDIUM"}, np.zeros(n_h + 1), tyre_limit=None)
+    stints, prev, comp = [], 0, "MEDIUM"
+    for lap in sorted(stops):
+        stints.append(RuleStint(comp, lap - prev))
+        prev, comp = lap, stops[lap]
+    stints.append(RuleStint(comp, race_laps - prev))
+    assert strategy_violations(stints, race_laps, tyre_limit_laps=limit) != []
