@@ -924,6 +924,16 @@ missing instead of falling back to a fit, and it records their SHA-256 in its ow
 05fec8828c8ca32c). Scored through the same tyre.calibration on the same y, so the numbers are
 comparable to the train CV figures.
 
+### THE RESULT IS A LOCATION ERROR, NOT AN INTERVAL ERROR
+Lead with this, not with 18.4%. The upper tail is CALIBRATED at 10.7% against a 10% target and
+only the lower tail is blown, at 18.4%, with a median residual of -0.099 s. A model whose
+intervals are too narrow misses symmetrically; this one does not. It predicts lap times about
+a tenth of a second SLOWER than the holdout actually ran, so reality keeps dropping out of the
+bottom of an interval that is the right width. THOSE TWO FAULTS ARE INDISTINGUISHABLE IN A
+POOLED MISS RATE and they call for different fixes: a location error wants the median moved,
+an interval error wants the spread widened. Quoting 18.4% alone invites the second reading and
+it is the wrong one.
+
 ### Result: 9 holdout races, 62818 rows, one pass
                      holdout    train CV    reading
   below p10            18.4%       10.7%    much worse
@@ -935,13 +945,6 @@ comparable to the train CV figures.
 By horizon, below p10 / MAE: h=1 15.1% / 0.446, h=5 19.5% / 0.636, h=15 19.2% / 0.813,
 h=30 20.9% / 0.902. Degradation grows with horizon, as in CV, but from a worse base.
 
-THE MISS IS ONE-SIDED AND THAT IS THE FINDING. The intervals are not uniformly too narrow:
-the upper tail is calibrated (10.7% against a 10% target) and only the lower tail is blown.
-Together with a median residual of -0.099 that says the frozen model predicts lap times about
-a tenth SLOWER than the holdout actually ran, so reality keeps falling out of the bottom of
-the interval. An interval problem and a location problem look the same in a pooled miss rate
-and are not the same thing.
-
 ### Where the degradation comes from, decomposed
   train CV, all seasons          10.7% below p10
   train CV, 2025 rows only       12.9%     the model was ALREADY worse on 2025 in CV
@@ -949,9 +952,15 @@ and are not the same thing.
   holdout, all 9 races           18.4%     Monaco alone
 2025 was already the worst season inside CV (below p10 12.9% against 9.2% for 2023 and 9.4%
 for 2024) and the holdout is 100% 2025, so part of this is season composition and not
-generalisation at all. MONACO IS THE WORST RACE BY A WIDE MARGIN: MAE 1.374 s against 0.542
-for the other eight together, with both tails blown (34.8% below, 24.3% above). Excluding it
-is a DIAGNOSTIC, not a corrected result: the reported figure is 18.4% and 0.665.
+generalisation at all. MONACO FAILS EXACTLY WHERE THIS PROJECT ALREADY KNOWS ITS PHYSICS IS
+ABSENT. MAE 1.374 s against 0.542 for the other eight together, both tails blown (34.8%
+below, 24.3% above), at the one circuit on the calendar where lap time is dominated by track
+position and traffic rather than by tyre state. The tyre model has no traffic term and the
+engine that would supply one failed validation three times (see "## ENGINE LIMITATION"), so
+Monaco is not an anomaly in the tyre model, it is the known missing physics showing up in the
+one place it cannot be ignored. That is a more useful statement than "worst race", and it
+predicts where else this model should be distrusted: wherever position beats pace.
+Excluding it is a DIAGNOSTIC, not a corrected result: the reported figure is 18.4% and 0.665.
 Four of the nine races are essentially calibrated: Canadian 10.2 / 8.0, United States 9.4 /
 11.0, Mexico City 10.0 / 6.7, Abu Dhabi 8.9 / 9.3. Japanese is the other bad one, 34.4% below
 p10 with a residual of -0.424, one-sided rather than wide.
@@ -967,8 +976,10 @@ p10 with a residual of -0.424, one-sided rather than wide.
 4. PARTLY WRONG. I predicted unseen tracks would drive the degradation. The median error is
    clearly worse there (MAE 0.725 unseen against 0.524 seen) but the interval miss is not
    (18.8% below unseen against 17.6% seen). The cut was fixed before the run precisely so this
-   could not be re-read afterwards, and it says my mechanism explains the MAE and not the
-   calibration.
+   could not be re-read afterwards. THAT IS WHAT MAKES IT CREDIBLE: the same cut chosen after
+   seeing an 18.4% miss would have been worthless, because with nine races and two groups
+   there is always a split that flatters whichever story you arrived with. Fixed in advance it
+   can refute, and it did: my mechanism explains the MAE and not the calibration.
 5. PARTLY RIGHT, see below.
 
 ### The horizon-shaped bias holds out of sample, and the Session 9 spec is the wrong size
@@ -985,10 +996,16 @@ SO THE SESSION 9 SENSITIVITY SPEC IS MIS-SPECIFIED ON ALL THREE COMPOUNDS out of
 live.P50_BIAS_LONG_H_S adds +0.09 to MEDIUM and SOFT beyond h = 15 and nothing to HARD. The
 holdout says MEDIUM wants roughly double that, SOFT roughly a third of it, and HARD wants a
 large NEGATIVE term it currently does not get.
-I HAVE NOT CHANGED IT, and changing it is exactly the tuning this pass forbids. It is also a
-decision rather than an edit: a sensitivity knob re-derived from the holdout would make every
-downstream sensitivity a function of holdout data, which is the contamination the ruling
-above carves out an exception to, not an extension of it. Needs an explicit call.
+RULED, SESSION 10: DO NOT RE-DERIVE THE KNOB FROM THE HOLDOUT. A sensitivity derived from the
+evaluation set stops being a sensitivity. The Session 9 spec stays exactly as it is and this
+mis-specification is carried as a DOCUMENTED LIMITATION instead.
+The reason it is a limitation and not a bug: THE KNOB'S JOB WAS SENSITIVITY ANALYSIS, NOT
+ACCURACY. It exists to answer "does this conclusion survive the tyre model being wrong in the
+direction we measured", and for that it only has to be the right shape and a plausible size.
+It is now known to be the wrong size on every compound, which weakens every sensitivity result
+that used it, including the Session 9 finding that the optimizer's compound choice is
+unstable. It does not make any of those results wrong; it makes them untested at the
+magnitude the holdout suggests.
 
 ### The gap is NARROWED, NOT CLOSED
 Scored on the holdout now: the tyre model, once. Everything else still never has been.
