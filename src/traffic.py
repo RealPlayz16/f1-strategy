@@ -123,12 +123,29 @@ def lap_state(laps: pd.DataFrame, slopes: pd.DataFrame) -> pd.DataFrame:
     df = df.join(base, on=["race", "driver", "stint"])
     df["free_pace"] = df["free_base"] + df["deg"] * df["tyre_life"]
 
-    fp = df.set_index(["race", "driver", "lap"])["free_pace"]
-    idx = pd.MultiIndex.from_arrays([df["race"], df["ahead_prev"].fillna(""), df["lap"]])
-    df["free_pace_ahead"] = fp.reindex(idx).to_numpy()
+    # CAUSAL counterpart. free_base above is the median over the clear-air laps of the WHOLE
+    # stint, so at lap k it can carry laps after k. A race engine at lap k has only laps up to
+    # k-1, so anything the engine queries must be fitted on this version instead: the
+    # expanding median over the stint's clear-air laps STRICTLY BEFORE this lap. NaN until the
+    # stint has had one, which is most of it: causal coverage is about 17% of close battles
+    # against 48% whole-stint, and it tracks lap-within-stint far more than gap. See
+    # causal_coverage and Session 8 in HANDOFF.md.
+    df = df.sort_values(["race", "driver", "stint", "lap"])
+    df["_clear_age_adj"] = df["age_adj"].where(free)
+    g = df.groupby(["race", "driver", "stint"], sort=False)["_clear_age_adj"]
+    df["free_base_causal"] = g.transform(lambda x: x.expanding().median().shift(1))
+    df = df.drop(columns=["_clear_age_adj"])
+    df["free_pace_causal"] = df["free_base_causal"] + df["deg"] * df["tyre_life"]
+
+    for col, src in (("free_pace_ahead", "free_pace"),
+                     ("free_pace_ahead_causal", "free_pace_causal")):
+        fp = df.set_index(["race", "driver", "lap"])[src]
+        idx = pd.MultiIndex.from_arrays([df["race"], df["ahead_prev"].fillna(""), df["lap"]])
+        df[col] = fp.reindex(idx).to_numpy()
     df["free_delta"] = df["free_pace_ahead"] - df["free_pace"]  # + = faster than car ahead
+    df["free_delta_causal"] = df["free_pace_ahead_causal"] - df["free_pace_causal"]
     df["dev"] = df["lap_time_fc_s"] - df["free_pace"]
-    return df
+    return df.sort_values(["race", "driver", "lap"])
 
 
 def dirty_air(state: pd.DataFrame, n_boot: int = N_BOOT) -> pd.DataFrame:

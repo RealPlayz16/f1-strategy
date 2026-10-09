@@ -28,6 +28,7 @@ Usage:
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -58,10 +59,21 @@ def load() -> pd.DataFrame:
     b = pd.read_parquet(BATTLES_PATH)
     b = b[b["split"] == "train"].copy()
     b["race"] = b["season"].astype(str) + "_" + b["round"].astype(str).str.zfill(2)
-    fp = pd.read_parquet(STATE_PATH).set_index(["race", "driver", "lap"])["free_pace"]
+    # CAUSAL free pace (Session 9). free_pace is the median over the WHOLE stint's clear-air
+    # laps, so fitting on it estimates the covered branch from a population defined with
+    # information the engine does not have at decision time, and the engine then always takes
+    # that branch. Both the FLAG (is it available) and the VALUE must be causal, or a
+    # causally-covered row still carries a delta computed from future laps.
+    # Session 8 measured the cost of the old version: the covered branch, fitted where the
+    # whole-stint-covered rate is 45.4% at 0-0.5 s, was standing in for a causally-covered
+    # population that passes at 53.7%, while the missing branch at 19.1% stood in for one at
+    # 27.4%. Set PASS_WHOLE_STINT_PACE=1 to refit the old way for comparison.
+    col = "free_pace" if os.environ.get("PASS_WHOLE_STINT_PACE") == "1" else "free_pace_causal"
+    fp = pd.read_parquet(STATE_PATH).set_index(["race", "driver", "lap"])[col]
     me = fp.reindex(pd.MultiIndex.from_arrays([b["race"], b["driver"], b["lap"]])).to_numpy()
     them = fp.reindex(pd.MultiIndex.from_arrays([b["race"], b["ahead"], b["lap"]])).to_numpy()
     b["free_delta"] = them - me  # + = follower faster in free air
+    b.attrs["pace_column"] = col
 
     sc = pd.read_parquet(SC_PATH)
     sc = sc[sc["kind"] == "SC"]

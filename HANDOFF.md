@@ -904,6 +904,66 @@ README (what a reviewer opens first):
 
 Carries: none of the Session 4 optimizer work exists; do not demo strategy rankings.
 
+## Session 9 results, item 1 (done): pass model refit on causal coverage
+
+The complete fix named in Session 8. The pass model's covered branch was estimated on a
+population defined with information the engine does not have, and the engine always takes
+that branch. Both the FLAG and the VALUE are now causal: src/traffic.py adds
+free_pace_causal, an expanding median over the stint's clear-air laps STRICTLY BEFORE this
+lap, and free_delta_causal from it. src/overtake_model.py fits on that.
+Only making the flag causal would have left a causally-covered row carrying a delta computed
+from future laps, which is a second leak the Session 8 note did not name.
+PASS_WHOLE_STINT_PACE=1 refits the old way, which is how the control below was run.
+
+### The refit is correctly specified and it makes the engine WORSE
+Isolated properly: both runs on the same 29-race data, only the pass model differs. The
+Session 8 figure of 60.6 passes was measured on 23 races and is NOT comparable to either.
+                              whole-stint    causal    actual
+  scored passes per race          55.8        62.6      35.1
+  battle laps per race           468.2       461.4     418.9
+  mean p vs blended rate, 0-0.5    1.22        1.33      1.00
+                          0.5-1    0.71        0.94      1.00
+                          1-1.5    1.03        1.29      1.00
+                          1.5-2    1.19        1.87      1.00
+  bins within the +-15% criterion  1 of 4      1 of 4
+PRIMARY CRITERION (pre-stated): engine mean predicted p per battle lap within 15% of the
+BLENDED actual rate per bin, because the causal partition is a partition of the same rows, so
+a correctly specified two-branch model at the true coverage mix must reproduce the blend.
+MISS, 1 of 4 bins, and the refit improves only the 0.5-1 bin (0.71 -> 0.94) while worsening
+the other three. Nothing was tuned.
+
+PREDICTIONS STATED BEFORE THE RUN, one falsified:
+1. WRONG in attribution, right in magnitude. I predicted passes would fall to about 56. The
+   control is 55.8, almost exactly that, but the fall came from the RACE-SET EXPANSION
+   (60.6 on 23 races -> 55.8 on 29) and the causal refit moved it back UP to 62.6. Predicting
+   the right number for the wrong reason is how a confounded comparison passes unnoticed; the
+   only thing that caught it was running the control.
+2. Right: AUC fell, 0.9240 -> 0.9167, since causal coverage is 21.4% of rows against 51.3%.
+3. Right: the unseen-track defect did not move, 0.1360 / 0.0770 against 0.1338 / 0.0770. It
+   is untouched by this and remains the pass model's largest known error.
+
+### Why it is kept anyway, and what it changes
+Each branch now serves its own population. At 0-0.5 s: covered observed 0.516 and predicted
+0.555, missing observed 0.272 and predicted 0.315, with coverage shares 16.7 / 15.8 / 23.8 /
+32.8% matching causal_coverage exactly. That is a correctness property, not a performance one,
+and it decides the question the same way it did for the Session 8 routing.
+
+THE MECHANISM FOR THE WORSE NUMBER IS IDENTIFIED. The engine over-covers in every bin
+(simulated 0.246 / 0.211 / 0.295 / 0.335 against causal 0.167 / 0.158 / 0.238 / 0.328) and the
+refit moved the two branches further apart (branch_mismatch 1.41 -> 1.65 at 0-0.5, 1.69 ->
+2.13 at 0.5-1), so the same coverage error costs more than it did. TWO ERRORS WERE PARTIALLY
+CANCELLING: branches too close together, and an engine that takes the hot branch too often.
+Removing the first exposed the second. Reverting would restore the cancellation, which is the
+worst available reason to prefer a model.
+CONSEQUENCE: the Session 8 coverage miss is now the BINDING defect rather than a footnote. It
+was +7.3 pp with no identified mechanism and is +7.9 pp now, and the pass count hinges on it.
+
+### Stale input found, not changed
+DIRTY_AIR_D0_S is hardcoded 0.35 from 23 races. On 29 the aero-only median at 0-0.5 s measures
+0.311. It was held at 0.35 so the pass model was the only thing that moved in this comparison.
+It is inside the stated sweep (0.24 to 0.66) but it is now a stale measurement feeding the
+engine, and it should be revisited on its own.
+
 ## Session 8 results, item 1 (done): free_missing routing
 
 Built the routing identified in Session 7. The engine now tracks, per car, whether it has had
@@ -1119,9 +1179,10 @@ Two smaller changes from the rebuilt models:
 - The tyre model has still never been scored on the holdout. See the correction above.
 - The engine's 0-0.5 s battle-lap excess (2.12x) still has no identified mechanism, and by
   user decision is not to be hunted without one to test.
-- A pass model refit with a causal coverage flag, which is the complete fix for the
-  covered-branch selection in "## ENGINE LIMITATION". The Session 8 routing is partial by
-  construction.
+- DONE in Session 9: the pass model refit on causal coverage. It is correctly specified
+  and made the engine worse, and it promoted the engine's coverage error to the binding
+  defect. See "Session 9 results, item 1".
+- DIRTY_AIR_D0_S is stale: 0.35 from 23 races, 0.311 measured on 29.
 
 ## Session 8 brief: free_missing routing, then expand the holdout
 
